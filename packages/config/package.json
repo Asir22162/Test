@@ -5,6 +5,6 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "echo 'build config'",
-    "test": "vitest"
+    "test": "vitest src --run"
   }
 }
