@@ -380,3 +380,50 @@ jobs:
           name: node22-compatibility
           path: packages/**/test-artifacts/** || true
 
+  mysql-smoke:
+    name: MySQL — smoke (compat)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MySQL client
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client
+      - name: Prepare artifact dir
+        run: mkdir -p packages/logging/test-artifacts
+      - name: Wait for MySQL (non-blocking)
+        run: |
+          for i in $(seq 1 60); do
+            if mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" > /tmp/mysql_smoke.log 2>&1; then
+              echo "MySQL is ready"
+              break
+            fi
+            sleep 1
+          done
+        continue-on-error: true
+      - name: Run smoke queries (non-blocking)
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot <<'SQL' > packages/logging/test-artifacts/mysql-smoke.log 2>&1 || true
+          CREATE TABLE IF NOT EXISTS smoke_test (id INT PRIMARY KEY);
+          INSERT IGNORE INTO smoke_test (id) VALUES (1);
+          SELECT * FROM smoke_test;
+          SQL
+        continue-on-error: true
+      - name: Upload MySQL smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-smoke-results
+          path: packages/logging/test-artifacts/mysql-smoke.log || true
+
