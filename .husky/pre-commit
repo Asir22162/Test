@@ -2,7 +2,16 @@
 . "$(dirname "$0")/_/husky.sh"
 
 # Generate & check shared-api types (fail the commit if types differ)
-pnpm -w run precommit:generate-types-check
+# Only run the check if packages/shared-api exists and defines the script
+if node -e "try{const p=require('./packages/shared-api/package.json'); process.exit(p.scripts && p.scripts['generate-types-check'] ? 0 : 2);}catch(e){process.exit(2)}"; then
+  pnpm -w run precommit:generate-types-check
+else
+  echo "Skipping generate-types-check: packages/shared-api or script not present"
+fi
 
 # Run lint-staged if configured
-npx lint-staged
+if node -e "try{const p=require(process.cwd() + '/package.json'); process.exit(!!p['lint-staged'] ? 0:1);}catch(e){process.exit(1)}"; then
+  npx lint-staged
+else
+  echo "Skipping lint-staged: no configuration found"
+fi

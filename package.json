@@ -15,7 +15,7 @@
     "test": "pnpm -w -r run test",
     "bootstrap": "pnpm install",
     "generate-types": "pnpm -w -r --filter packages/shared-api... run generate-types",
-    "precommit:generate-types-check": "pnpm --filter packages/shared-api... run generate-types-check",
+    "precommit:generate-types-check": "pnpm --filter ./packages/shared-api... run generate-types-check",
     "prepare": "husky install",
     "lint:fix": "pnpm -w -r run lint:fix",
     "prepare:h": "husky install && npx husky add .husky/pre-commit 'pnpm -w -r run lint:fix'"

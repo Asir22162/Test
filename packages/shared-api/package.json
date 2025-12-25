@@ -4,7 +4,7 @@
   "scripts": {
     "generate-types": "npx openapi-typescript openapi.yaml --output src/types.ts",
     "validate-openapi": "npx @apidevtools/swagger-cli validate openapi.yaml",
-    "generate-types-check": "(npx openapi-typescript openapi.yaml --output src/types.generated.ts && if ! cmp -s src/types.generated.ts src/types.ts; then rm src/types.generated.ts; echo 'Generated types differ from committed types. Run \"pnpm --filter packages/shared-api... run generate-types\" and commit the result.'; exit 1; else rm src/types.generated.ts; fi)",
+"generate-types-check": "node ./scripts/generate-types-check.js",
     "test": "vitest",
     "pact:consumer": "vitest tests/pact.consumer.test.ts",
     "pact:provider-verify": "vitest tests/pact.provider.test.ts",
