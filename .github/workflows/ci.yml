@@ -414,6 +414,47 @@ jobs:
             echo "All detected pom.xml files either do not reference Spring Boot parent/bom or reference 3.5.9.";
           fi
 
+  check-vue-vite:
+    name: Check Vue & Vite versions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan package.json files for vue/vite versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Scanning for package.json files..."
+          invalid=0
+          for p in $(git ls-files '**/package.json' || true); do
+            echo "Checking $p"
+            vue=$(jq -r '.dependencies.vue // .devDependencies.vue // empty' "$p" || true)
+            vite=$(jq -r '.devDependencies.vite // .dependencies.vite // empty' "$p" || true)
+            if [ -n "$vue" ]; then
+              # remove leading ^ or ~
+              v=$(echo "$vue" | sed 's/^[^0-9]*//')
+              major=$(echo "$v" | cut -d. -f1)
+              if [ "$major" != "3" ]; then
+                echo "ERROR: $p uses vue version $vue (expected major 3)"
+                invalid=1
+              fi
+            fi
+            if [ -n "$vite" ]; then
+              v2=$(echo "$vite" | sed 's/^[^0-9]*//')
+              major2=$(echo "$v2" | cut -d. -f1)
+              if [ "$major2" != "6" ] && [ "$major2" != "7" ]; then
+                echo "ERROR: $p uses vite version $vite (expected major 6 or 7)"
+                invalid=1
+              fi
+            fi
+          done
+          if [ "$invalid" -eq 1 ]; then
+            echo "One or more package.json files do not satisfy Vue/Vite baseline. Failing check.";
+            exit 1
+          else
+            echo "All detected package.json files comply with Vue 3.x and Vite 6/7 baselines (or do not declare them).";
+          fi
+
   mysql-smoke:
     name: MySQL — smoke (compat)
     runs-on: ubuntu-latest

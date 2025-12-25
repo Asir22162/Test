@@ -19,8 +19,10 @@ Adopt the following baseline versions:
 
 - Frontend
   - Node.js: 20.x (primary baseline). Allow Node 22 as optional compatibility channel.
-  - Vue: 3.x
+  - Vue: 3.x (baseline; project templates include Vue 3 + Vite 7)
   - Vite: 6/7 (follow scaffolding default; Node 20 required)
+
+Notes: A frontend template (`packages/frontend-template`) is provided as an example. CI includes a `check-vue-vite` job that validates `package.json` files for Vue major=3 and Vite major=6 or 7.
 
 - Data & Caching
   - MySQL: 8.4 LTS (use latest 8.4.x patch when available)
