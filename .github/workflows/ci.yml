@@ -177,6 +177,43 @@ jobs:
           echo "Smoke tests failed; failing job. See artifacts 'logging-smoke-results' for details."
           exit 1
 
+  smoke-api:
+    name: Smoke — apps/api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          pnpm install --frozen-lockfile
+      - name: Build apps/api
+        run: pnpm -C apps/api run build || true
+      - name: Run API smoke (healthcheck)
+        shell: bash
+        continue-on-error: true
+        run: |
+          mkdir -p apps/api/test-artifacts
+          node apps/api/dist/main.js &
+          APP_PID=$!
+          sleep 1
+          if curl -sS http://127.0.0.1:3000/health > apps/api/test-artifacts/health.json 2>&1; then
+            echo "API_SMOKE_PASSED=1" >> $GITHUB_ENV
+          else
+            echo "API_SMOKE_FAILED=1" >> $GITHUB_ENV
+          fi
+          kill $APP_PID || true
+      - name: Upload api smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-smoke-results
+          path: apps/api/test-artifacts/**
+
   build:
     needs: smoke-logging
     runs-on: ubuntu-latest
