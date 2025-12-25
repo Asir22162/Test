@@ -19,7 +19,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
+          node-version: '20.x'
 
       - name: Setup pnpm
         run: |
@@ -33,3 +33,30 @@ jobs:
         env:
           NODE_ENV: test
         run: pnpm -w -C ops test:ops
+
+  ops-tests-node22:
+    name: Run ops tests (Node 22 compatibility)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        run: pnpm install --recursive --silent
+
+      - name: Run ops tests (Node 22)
+        env:
+          NODE_ENV: test
+        run: pnpm -w -C ops test:ops
+        continue-on-error: true

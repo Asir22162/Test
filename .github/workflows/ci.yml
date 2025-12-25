@@ -3,14 +3,189 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  build:
+  smoke-logging:
+    name: Smoke — packages/logging
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          pnpm install --frozen-lockfile
+      - name: Check for changes affecting logging
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            logging:
+              - 'packages/logging/**'
+      - name: Prepare artifacts dir when skipped
+        if: steps.changes.outputs.logging == 'false'
+        run: |
+          mkdir -p packages/logging/test-artifacts
+          echo "SKIPPED" > packages/logging/test-artifacts/skip.txt
+          echo "TESTS_SKIPPED=1" >> $GITHUB_ENV
+      - name: Run logging package smoke tests (capture JSON results)
+        shell: bash
+        continue-on-error: true
+        if: steps.changes.outputs.logging == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p packages/logging/test-artifacts
+          # Run tests and capture JSON output and full stdout for debugging
+          pnpm -C packages/logging test -- --reporter json > packages/logging/test-artifacts/test-results.json 2>&1 || true
+          echo "$?" > packages/logging/test-artifacts/test-exitcode
+          if [ "$(cat packages/logging/test-artifacts/test-exitcode)" -ne 0 ]; then
+            echo "TESTS_FAILED=1" >> $GITHUB_ENV
+          fi
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logging-smoke-results
+          path: packages/logging/test-artifacts/**
+      - name: Comment on PR if smoke failed
+        if: ${{ env.TESTS_FAILED == '1' && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const resultsPath = 'packages/logging/test-artifacts/test-results.json'
+            let body = '⚠️ Smoke tests for `packages/logging` failed.'
+
+            if (fs.existsSync(resultsPath)) {
+              try {
+                const content = fs.readFileSync(resultsPath, 'utf8')
+                const json = JSON.parse(content)
+                // Try to extract summary: tests array or stats
+                let summary = ''
+                if (Array.isArray(json.tests)) {
+                  const total = json.tests.length
+                  const passed = json.tests.filter(t => t.result && t.result.status === 'passed').length
+                  const failed = json.tests.filter(t => t.result && t.result.status === 'failed').length
+                  summary = `\n\n**Summary:** ${passed}/${total} passed, ${failed} failed.`
+                } else if (json.numPassedTests !== undefined || json.numTotalTests !== undefined) {
+                  const passed = json.numPassedTests || 0
+                  const total = json.numTotalTests || 0
+                  const failed = json.numFailedTests || 0
+                  summary = `\n\n**Summary:** ${passed}/${total} passed, ${failed} failed.`
+                } else {
+                  summary = '\n\n(Unable to parse detailed test summary)'
+                }
+                body += summary
+                body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```
+" + (content.substring(0, 10000) || '') + "\n```\n</details>"
+              } catch (e) {
+                const content = fs.readFileSync(resultsPath, 'utf8')
+                body += "\n\n<details><summary>Test results (raw)</summary>\n\n```
+" + content.substring(0, 10000) + "\n```\n</details>"
+              }
+            }
+
+            // include metrics snapshot if present and format as Markdown table
+            const metricsPath = 'packages/logging/test-artifacts/metrics.txt'
+            if (fs.existsSync(metricsPath)) {
+              const m = fs.readFileSync(metricsPath, 'utf8')
+              // parse simple Prometheus text format into rows
+              const lines = m.split('\n')
+              const rows = []
+              let currentRegistry = ''
+              for (const line of lines) {
+                if (!line.trim()) continue
+                if (line.startsWith('# Registry:')) {
+                  currentRegistry = line.replace('# Registry:', '').trim()
+                  continue
+                }
+                if (line.startsWith('#')) continue
+                const parts = line.trim().split(/\s+/)
+                if (parts.length >= 2) {
+                  const metric = parts[0]
+                  const value = parts.slice(1).join(' ')
+                  rows.push({ registry: currentRegistry || 'default', metric, value })
+                }
+              }
+
+              if (rows.length > 0) {
+                body += '\n\n**Metrics snapshot:**\n\n'
+                // aggregate per-registry useful metrics and build header summary
+                const aggregates = {}
+                for (const r of rows) {
+                  const reg = r.registry || 'default'
+                  if (!aggregates[reg]) aggregates[reg] = { flushes: 0, errors: 0, writeBytes: 0, bufferLen: null }
+                  const mname = r.metric
+                  const val = Number(r.value)
+                  if (mname.toLowerCase().includes('flush')) {
+                    if (!Number.isNaN(val)) aggregates[reg].flushes += val
+                  } else if (mname.toLowerCase().includes('error')) {
+                    if (!Number.isNaN(val)) aggregates[reg].errors += val
+                  } else if (mname.toLowerCase().includes('write_bytes') || mname.toLowerCase().includes('writebytes')) {
+                    if (!Number.isNaN(val)) aggregates[reg].writeBytes += val
+                  } else if (mname.toLowerCase().includes('buffer_len') || mname.toLowerCase().includes('bufferlen')) {
+                    if (!Number.isNaN(val)) aggregates[reg].bufferLen = val
+                  }
+                }
+
+                const totalErrors = Object.values(aggregates).reduce((s, a) => s + (a.errors || 0), 0)
+                const totalFlushes = Object.values(aggregates).reduce((s, a) => s + (a.flushes || 0), 0)
+                const totalBytes = Object.values(aggregates).reduce((s, a) => s + (a.writeBytes || 0), 0)
+
+                body += `\n\n**Metrics summary:**\n\n- **Registries:** ${Object.keys(aggregates).length}\n- **Total errors:** ${totalErrors}\n- **Total flushes:** ${totalFlushes}\n- **Total bytes written:** ${totalBytes}\n\n`
+
+                // per-registry aggregate table
+                body += '| Registry | Flushes | Errors | WriteBytes | BufferLen |\n|---|---:|---:|---:|---:|\n'
+                for (const [reg, agg] of Object.entries(aggregates)) {
+                  body += `| ${reg} | ${agg.flushes || 0} | ${agg.errors || 0} | ${agg.writeBytes || 0} | ${agg.bufferLen != null ? agg.bufferLen : ''} |\n`
+                }
+
+                // then show detailed table (first 200 rows)
+                body += '\n\n**All metrics (first 200 rows):**\n\n'
+                body += '| Registry | Metric | Value |\n|---|---:|---:|\n'
+                for (const r of rows.slice(0, 200)) {
+                  body += `| ${r.registry} | ${r.metric} | ${r.value} |\n`
+                }
+                if (rows.length > 200) body += `\n*(Only first 200 metrics shown)*\n`
+              } else {
+                body += "\n\n**Metrics snapshot:**\n\n```
+" + m.substring(0,4000) + "\n```"
+              }
+
+              // add a link to the run so reviewers can download artifacts
+              const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+              body += `\n\nArtifacts for this run are available: [View artifacts & logs](${runUrl})`
+            }
+
+            const pr = github.context.payload.pull_request
+            if (pr) {
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+      - name: Comment on PR if smoke skipped
+        if: ${{ env.TESTS_SKIPPED == '1' && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = github.context.payload.pull_request
+            if (pr) {
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body: 'ℹ️ Smoke tests for `packages/logging` were skipped because there were no relevant changes.' })
+            }
+      - name: Fail if tests failed
+        if: ${{ env.TESTS_FAILED == '1' }}
+        run: |
+          echo "Smoke tests failed; failing job. See artifacts 'logging-smoke-results' for details."
+          exit 1
+
+  build:
+    needs: smoke-logging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
           cache: 'pnpm'
       - name: Install
         run: |
@@ -169,4 +344,32 @@ jobs:
         with:
           name: dependency-audit
           path: audit.json
+
+  compatibility-node22:
+    name: Compatibility — Node 22
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node (22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm -w -r run lint
+      - name: Test (Node 22)
+        # allow failures here so Node 22 remains a non-blocking compatibility check
+        run: pnpm -w -r run test
+        continue-on-error: true
+      - name: Upload compatibility artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node22-compatibility
+          path: packages/**/test-artifacts/** || true
 

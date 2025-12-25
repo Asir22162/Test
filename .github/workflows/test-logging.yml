@@ -1,0 +1,48 @@
+name: "Test — packages/logging"
+
+on:
+  push:
+    paths:
+      - 'packages/logging/**'
+  pull_request:
+    paths:
+      - 'packages/logging/**'
+
+jobs:
+  test-logging:
+    name: Test packages/logging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install pnpm
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run logging package tests
+        run: pnpm -C packages/logging test --reporter dot
+
+  test-logging-node22:
+    name: Test packages/logging (Node 22 compatibility)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node (22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install pnpm
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run logging package tests (Node 22)
+        run: pnpm -C packages/logging test --reporter dot
+        continue-on-error: true
