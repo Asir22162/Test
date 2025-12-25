@@ -45,6 +45,43 @@
 
 附加自动化：CI 现在支持在检测到 high/critical 级别漏洞时自动创建一个 GitHub Issue（使用 `ops/create-issue.js`），Issue 会包含 Top-N 摘要、`audit.json` 的摘要片段以及生成的 `ops/suggested-fixes.sh` 内容，方便人工审查与审批。默认行为是由工作流触发并以非破坏性方式运行（生成脚本与上传 artifact），实际应用修复仍然应由人工审核后合并。
 
+必备 Secrets / 权限：
+
+- `GITHUB_TOKEN`（建议使用 repository-scoped token） — 用于自动创建 Issue 与（可选）创建 PR。需要包含 `repo` 权限以创建 issues/PRs。
+- `AUDIT_ALERT_WEBHOOK` — 可选，用于把审计告警发送到 Slack / Microsoft Teams。
+
+注意：如果 `GITHUB_TOKEN` 未配置，工作流仍会运行并生成 artifact，但不会自动创建 Issue。CI 中会发出警告（请在 Workflows → run logs 中查看 `Run ops secret checks` 步骤的输出）。
+
+Artifact 附件到 Issue（扩展功能）：
+
+自动把完整 artifact 附到 Issue 现在支持可选实现（由 `ATTACH_ARTIFACT` 环境变量控制）。当 `ATTACH_ARTIFACT=true` 时，工作流会：
+
+1. 使用 `GITHUB_TOKEN` 列出当前 repository 的 Actions artifacts；
+2. 下载匹配的 artifact（例如 `suggest-fixes-dry-run-artifacts`）；
+3. 在 repository 中创建一个 **draft release** 并把 artifact 上传为 release asset；
+4. 在 Issue 中发表评论并附上 draft release 的链接，便于审查者下载完整 artifact。
+
+注意与权限要求：
+- 需要 `GITHUB_TOKEN` 拥有 `repo` 权限以创建 releases / 上传资产；
+- `ATTACH_ARTIFACT` 默认为 `false`，请在仓库 Secrets 中设置 `ATTACH_ARTIFACT=true` 并保证 `GITHUB_TOKEN` 权限足够时启用该功能。
+
+如果你希望我启用并测试该功能，我可以帮你把它部署为 workflow 的可选行为并添加相应的测试与日志。
+
+额外健壮性说明：当启用 artifact 附加时，脚本会对上传行为进行重试；如果上传最终失败，会尝试删除刚创建的 draft release 以避免遗留孤立的 release。
+测试加速与 CI 指南：
+
+- 为了在本地快速运行测试并减少等待时间，脚本在测试环境中使用较短的重试延迟；你也可以通过设置环境变量 `FAST_TEST_RETRIES` 来显式控制：
+  - 如果设置为一个数字（例如 `100`），该数值将被用作重试基准延迟（毫秒）；
+  - 如果设置为 `true`，脚本会使用 10ms 的短基准延迟；
+  - 如果未设置，测试环境 (`NODE_ENV=test`) 会自动默认使用较小延迟。
+
+  示例（在本地快速运行）：
+
+  ```bash
+  FAST_TEST_RETRIES=true pnpm -w -C ops test:ops
+  ```
+
+- CI 建议：在 CI 环境中使用 Node LTS（例如 `node-version: 18.x`）来运行 ops 测试；除非需要加速测试，否则无需设置 `FAST_TEST_RETRIES`，以便更接近真实重试行为。
 Trigger helper:
 
 仓库包含一个小脚本 `ops/trigger-workflow.sh`，可用于触发指定 workflow（例如 `suggest-fixes-dry-run.yml`）的 `workflow_dispatch`:

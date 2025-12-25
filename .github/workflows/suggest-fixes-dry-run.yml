@@ -39,12 +39,18 @@ jobs:
       - name: Run ops tests
         run: pnpm --filter ops... run test:ops || true
 
+      - name: Run ops secret checks
+        run: pnpm --filter ops... run check-secrets || true
+
       - name: Generate suggested fixes script
         run: bash ops/suggest-fixes.sh audit.json || true
 
       - name: Create GitHub issue for high severity vulnerabilities
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTACH_ARTIFACT: ${{ secrets.ATTACH_ARTIFACT || 'false' }}
+          RELEASE_DRAFT: ${{ secrets.RELEASE_DRAFT || 'true' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           echo "Checking audit-summary.json for high/critical vulnerabilities..."

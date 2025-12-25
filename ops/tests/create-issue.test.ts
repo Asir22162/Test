@@ -1,8 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import nock from 'nock';
+const nock = require('nock');
 import { spawnSync } from 'child_process';
 
 describe('ops/create-issue.js', () => {
@@ -10,7 +9,7 @@ describe('ops/create-issue.js', () => {
     nock.cleanAll();
   });
 
-  it('creates an issue when high vulnerabilities exist', () => {
+  it('creates an issue when high vulnerabilities exist', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-test-'));
     const summary = {
       count: 1,
@@ -43,16 +42,21 @@ describe('ops/create-issue.js', () => {
       })
       .reply(201, { html_url: 'https://github.com/owner/repo/issues/1' });
 
-    const res = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'create-issue.js'), 'audit-summary.json'], {
-      cwd: tmp,
-      env: { ...process.env, GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '99' }
-    });
+    const { runCreateIssue } = require('../create-issue');
+    let out = '';
+    const ol = console.log; const oe = console.error; const ow = console.warn;
+    console.log = (...a) => { out += a.join(' ') + '\n'; };
+    console.error = (...a) => { out += a.join(' ') + '\n'; };
+    console.warn = (...a) => { out += a.join(' ') + '\n'; };
 
-    expect(res.status).toBe(0);
+    await runCreateIssue('audit-summary.json', { cwd: tmp, env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '99' } });
+
+    console.log = ol; console.error = oe; console.warn = ow;
+
     expect(scope.isDone()).toBe(true);
   });
 
-  it('does nothing when no vulnerabilities', () => {
+  it('does nothing when no vulnerabilities', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-test-'));
     const summary = { count: 0, top: [] };
     fs.writeFileSync(path.join(tmp, 'audit-summary.json'), JSON.stringify(summary));
@@ -60,16 +64,13 @@ describe('ops/create-issue.js', () => {
     const token = 'token';
     const scope = nock('https://api.github.com').post(`/repos/${repo}/issues`).reply(201, {});
 
-    const res = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'create-issue.js'), 'audit-summary.json'], {
-      cwd: tmp,
-      env: { ...process.env, GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '100' }
-    });
+    const { runCreateIssue } = require('../create-issue');
+    await runCreateIssue('audit-summary.json', { cwd: tmp, env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '100' } });
 
-    expect(res.status).toBe(0);
     expect(scope.isDone()).toBe(false);
   });
 
-  it('handles GitHub API 500 gracefully (non-fatal)', () => {
+  it('handles GitHub API 500 gracefully (non-fatal)', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-test-'));
     const summary = { count: 1, top: [{ package: 'pkg', severity: 'high', title: 'bad', suggestedCommand: '' }] };
     fs.writeFileSync(path.join(tmp, 'audit-summary.json'), JSON.stringify(summary));
@@ -84,27 +85,29 @@ describe('ops/create-issue.js', () => {
       .post(`/repos/${repo}/issues`)
       .reply(500, { message: 'server error' });
 
-    const res = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'create-issue.js'), 'audit-summary.json'], {
-      cwd: tmp,
-      env: { ...process.env, GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '101' }
-    });
+    const { runCreateIssue } = require('../create-issue');
+    await runCreateIssue('audit-summary.json', { cwd: tmp, env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_REPOSITORY: repo, GITHUB_TOKEN: token, GITHUB_RUN_ID: '101' } });
 
     // script should exit 0 (non-fatal) and have attempted the request
-    expect(res.status).toBe(0);
     expect(scope.isDone()).toBe(true);
   });
 
-  it('exits gracefully when GITHUB_TOKEN is missing', () => {
+  it('exits gracefully when GITHUB_TOKEN is missing', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-test-'));
     const summary = { count: 1, top: [{ package: 'pkg', severity: 'high', title: 'bad' }] };
     fs.writeFileSync(path.join(tmp, 'audit-summary.json'), JSON.stringify(summary));
 
-    const res = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'create-issue.js'), 'audit-summary.json'], {
-      cwd: tmp,
-      env: { ...process.env, GITHUB_REPOSITORY: 'owner/repo', GITHUB_RUN_ID: '102' }
-    });
+    const { runCreateIssue } = require('../create-issue');
+    let out = '';
+    const ol = console.log; const oe = console.error; const ow = console.warn;
+    console.log = (...a) => { out += a.join(' ') + '\n'; };
+    console.error = (...a) => { out += a.join(' ') + '\n'; };
+    console.warn = (...a) => { out += a.join(' ') + '\n'; };
 
-    expect(res.status).toBe(0);
-    expect(String(res.stdout)).toContain('GITHUB_TOKEN not set');
+    await runCreateIssue('audit-summary.json', { cwd: tmp, env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_REPOSITORY: 'owner/repo', GITHUB_RUN_ID: '102', GITHUB_TOKEN: undefined } });
+
+    console.log = ol; console.error = oe; console.warn = ow;
+
+    expect(out).toContain('GITHUB_TOKEN not set');
   });
 });

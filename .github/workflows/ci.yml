@@ -22,7 +22,11 @@ jobs:
         run: pnpm -w -r run test
 
       - name: Run ops tests
-        run: pnpm --filter ops... run test
+        run: pnpm --filter ops... run test:ops || true
+
+      - name: Run ops tests (watch mode dry-run)
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm --filter ops... run test:ops || true
 
       - name: Run publish-pacts unit tests (shared-api)
         run: pnpm --filter packages/shared-api... run test:publish

@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "scripts": {
     "test": "vitest",
-    "test:ops": "vitest ops/tests --run"
+    "test:ops": "vitest ops/tests --run",
+    "test:ops:watch": "vitest ops/tests --watch",
+    "check-secrets": "node ops/check-secrets.js"
   },
   "devDependencies": {
     "vitest": "^1.0.0",
