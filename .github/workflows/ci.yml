@@ -191,6 +191,13 @@ jobs:
         run: |
           curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+      - name: Setup Java (check baseline)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Check Java version
+        run: java -version
       - name: Lint
         run: pnpm -w -r run lint
       - name: Test
