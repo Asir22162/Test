@@ -1,0 +1,168 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+      - name: Install
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm -w -r run lint
+      - name: Test
+        run: pnpm -w -r run test
+
+      - name: Run ops tests
+        run: pnpm --filter ops... run test
+
+      - name: Run publish-pacts unit tests (shared-api)
+        run: pnpm --filter packages/shared-api... run test:publish
+
+      - name: Check publish-pacts test results
+        if: always()
+        run: |
+          if [ -f packages/shared-api/pacts/publish-results.json ]; then
+            echo "--- Publish pacts unit test results ---"
+            cat packages/shared-api/pacts/publish-results.json
+            if grep -q '"ok": false' packages/shared-api/pacts/publish-results.json; then
+              echo "::error file=packages/shared-api/pacts/publish-results.json::Publish-pacts tests found failing entries. See artifact 'publish-pacts-test-results' for details."
+              exit 1
+            fi
+          else
+            echo "No publish-results.json found from publish tests."
+          fi
+
+      - name: Upload publish-pacts test artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-pacts-test-results
+          path: packages/shared-api/pacts/publish-results.json || true
+
+      - name: Build
+        run: pnpm -w -r run build
+
+      - name: Run Pact consumer tests (generate pacts)
+        run: pnpm --filter packages/shared-api... run pact:consumer
+
+      - name: Publish pacts to Pact Broker (if configured)
+        if: env.PACT_BROKER_BASE_URL != '' && env.PACT_BROKER_BASE_URL != null
+        env:
+          PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          # Optional Basic auth secrets (use instead of token)
+          PACT_BROKER_USERNAME: ${{ secrets.PACT_BROKER_USERNAME }}
+          PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+          # Optional metadata (JSON string) and strategy ('header'|'body'|'participant_meta')
+          PACT_BROKER_METADATA: ${{ secrets.PACT_BROKER_METADATA }}
+          PACT_BROKER_METADATA_STRATEGY: ${{ secrets.PACT_BROKER_METADATA_STRATEGY || 'header' }}
+          # Optional endpoint overrides for metadata uploads
+          PACT_BROKER_META_ENDPOINT: ${{ secrets.PACT_BROKER_META_ENDPOINT }}
+          PACT_BROKER_PARTICIPANT_META_ENDPOINT: ${{ secrets.PACT_BROKER_PARTICIPANT_META_ENDPOINT }}
+          GITHUB_SHA: ${{ github.sha }}
+          # Pass branch name as tags; support multiple tags via comma-separated secret PACT_BROKER_TAGS
+          PACT_BROKER_TAGS: ${{ secrets.PACT_BROKER_TAGS || github.ref_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Publishing pacts to broker at $PACT_BROKER_BASE_URL"
+          pnpm --filter packages/shared-api... run pact:publish
+
+      - name: Upload pact publish results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-publish-results
+          path: packages/shared-api/pacts/publish-results.json || true
+
+      - name: Show pact publish results
+        if: always()
+        run: |
+          if [ -f packages/shared-api/pacts/publish-results.json ]; then
+            echo "--- Pact publish results ---"
+            cat packages/shared-api/pacts/publish-results.json
+            # emit annotation if any failures
+            if grep -q '"ok": false' packages/shared-api/pacts/publish-results.json; then
+              echo "::error file=packages/shared-api/pacts/publish-results.json::One or more pacts failed to publish. See artifact 'pact-publish-results' for details."
+              exit 1
+            fi
+          else
+            echo "No publish-results.json found; publishing may have been skipped or failed before producing results."
+          fi
+      - name: Validate Shared API OpenAPI
+        run: pnpm --filter packages/shared-api... run validate-openapi
+
+      - name: Generate & check Shared API types
+        id: gen-types
+        run: |
+          set -o pipefail
+          pnpm --filter packages/shared-api... run generate-types
+          # compare generated types with committed file; if different, fail the job with explicit guidance
+          mv packages/shared-api/src/types.ts packages/shared-api/src/types.committed.ts
+          pnpm --filter packages/shared-api... run generate-types
+          if ! cmp -s packages/shared-api/src/types.committed.ts packages/shared-api/src/types.ts; then
+            # Emit GitHub annotation so error appears inline in PR checks
+            echo "::error file=packages/shared-api/src/types.ts,line=1,col=1::Generated types differ from committed types."
+            echo "::error::To fix locally, run: pnpm --filter packages/shared-api... run generate-types && git add packages/shared-api/src/types.ts && git commit -m 'chore(shared-api): update generated types' && git push"
+            echo "::error::For details see CONTRIBUTING.md in the repository root."
+            # Also print to log for visibility
+            echo "\nERROR: Generated types differ from committed types. To fix locally run:"
+            echo "  pnpm --filter packages/shared-api... run generate-types"
+            echo "  git add packages/shared-api/src/types.ts"
+            echo "  git commit -m 'chore(shared-api): update generated types'"
+            echo "  git push"
+            exit 1;
+          fi
+
+      - name: Run Pact provider verification (PoC)
+        run: pnpm --filter packages/shared-api... run pact:provider-verify
+
+
+      - name: Dependency audit
+        run: |
+          pnpm -v || true
+          # run pnpm audit if available, fall back to npm audit
+          if pnpm audit --json > audit.json 2>/dev/null; then
+            echo "pnpm audit output saved to audit.json"
+          else
+            echo "pnpm audit not available or failed; trying npm audit"
+            npm audit --json > audit.json || true
+          fi
+
+      - name: Check dependency audit results (shared script)
+        if: always()
+        env:
+          AUDIT_ALERT_WEBHOOK: ${{ secrets.AUDIT_ALERT_WEBHOOK }}
+          AUDIT_ALERT_TYPE: ${{ secrets.AUDIT_ALERT_TYPE || 'slack' }}
+        run: |
+          # Use centralized script for audit checking (with optional alerting)
+          bash ops/check-audit.sh audit.json
+
+      - name: Dependency audit
+        run: |
+          pnpm -v || true
+          # run pnpm audit if available, fall back to npm audit
+          if pnpm audit --json > audit.json 2>/dev/null; then
+            echo "pnpm audit output saved to audit.json"
+          else
+            echo "pnpm audit not available or failed; trying npm audit"
+            npm audit --audit-level=high || true
+          fi
+      - name: Upload test results (placeholder)
+        if: always()
+        run: echo "(Add test result upload step if needed)"
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit
+          path: audit.json
+

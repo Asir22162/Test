@@ -1,0 +1,8 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Generate & check shared-api types (fail the commit if types differ)
+pnpm -w run precommit:generate-types-check
+
+# Run lint-staged if configured
+npx lint-staged

@@ -1,0 +1,17 @@
+{
+  "name": "@weixin/auth",
+  "version": "0.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "jose": "^4.15.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}

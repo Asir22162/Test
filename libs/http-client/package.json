@@ -1,0 +1,17 @@
+{
+  "name": "@weixin/http-client",
+  "version": "0.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "node-fetch": "^3.4.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}

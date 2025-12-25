@@ -1,0 +1,104 @@
+name: Suggest fixes (dry-run)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 3 * * 1' # weekly on Monday 03:00 UTC
+
+jobs:
+  dry-run:
+    name: Dry run suggested dependency fixes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run audit (generate audit.json)
+        run: pnpm audit --json > audit.json || true
+
+      - name: Summarize audit
+        run: node ops/check-audit.js audit.json > audit-summary.json || true
+
+      - name: Run ops tests
+        run: pnpm --filter ops... run test:ops || true
+
+      - name: Generate suggested fixes script
+        run: bash ops/suggest-fixes.sh audit.json || true
+
+      - name: Create GitHub issue for high severity vulnerabilities
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Checking audit-summary.json for high/critical vulnerabilities..."
+          if [ -f audit-summary.json ] && [ "$(jq '.count' audit-summary.json)" -gt 0 ]; then
+            echo "High/critical vulnerabilities detected; creating issue..."
+            node ops/create-issue.js audit-summary.json || true
+          else
+            echo "No high/critical vulnerabilities found; skipping issue creation."
+          fi || true
+
+      - name: Apply suggested fixes in isolated clone (dry-run)
+        run: |
+          set -euo pipefail
+          echo "Cloning repository into repo-dry-run..."
+          git clone --depth 1 . repo-dry-run
+          cp ops/suggested-fixes.sh repo-dry-run/ops/suggested-fixes.sh || true
+          cp audit.json repo-dry-run/audit.json || true
+          cd repo-dry-run
+          chmod +x ops/suggested-fixes.sh || true
+          BRANCH_NAME="temp/dep-fix-${{ github.run_id }}"
+          echo "Creating branch $BRANCH_NAME and running fixes inside the clone (no push)..."
+          git checkout -b "$BRANCH_NAME"
+          # Run fixes; if they fail, we continue to gather artifacts for inspection
+          bash ops/suggested-fixes.sh audit.json --run --branch "$BRANCH_NAME" || true
+          if git rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
+            git checkout "$BRANCH_NAME"
+            echo "Creating archive for branch $BRANCH_NAME"
+            git archive -o ../fixes-branch-${{ github.run_id }}.tar HEAD
+          else
+            echo "No fixes branch created in clone"
+          fi
+        shell: bash
+
+      - name: Create patch (if changes exist)
+        run: |
+          set -euo pipefail
+          if [ -f fixes-branch-${{ github.run_id }}.tar ]; then
+            mkdir -p extracted-fixes
+            tar -xf fixes-branch-${{ github.run_id }}.tar -C extracted-fixes
+            # create a patch by comparing with current HEAD tree
+            git --no-pager diff --no-index --patch --unified=3 -- src || true
+            # create a patched archive for review
+            tar -czf fixes-branch-${{ github.run_id }}.tar.gz -C extracted-fixes . || true
+          fi
+        shell: bash
+
+      - name: Upload artifacts for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: suggest-fixes-dry-run-artifacts
+          path: |
+            audit.json
+            audit-summary.json
+            ops/suggested-fixes.sh
+            fixes-branch-${{ github.run_id }}.tar
+            fixes-branch-${{ github.run_id }}.tar.gz
+            fixes.patch

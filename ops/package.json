@@ -1,0 +1,14 @@
+{
+  "name": "ops",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "vitest",
+    "test:ops": "vitest ops/tests --run"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "nock": "^13.3.0",
+    "@types/node": "^18.0.0"
+  }
+}
