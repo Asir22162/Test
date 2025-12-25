@@ -20,7 +20,7 @@ Testing:
 - Smoke scripts can be run locally with `bash ops/smoke/mysql-smoke.sh` and `bash ops/smoke/redis-smoke.sh` (requires Docker).
 
 Notes:
-- MySQL job uses `mysql:8.4` in CI; if the tag is not available, consider pinning to `mysql:8.0` or specifying exact `8.4.x` when available.
+- MySQL job uses `mysql:8.0` in CI (conservative, widely available). If a future decision moves to 8.4, we will pin an explicit `8.4.x` tag when it is available/verified.
 - CI smoke jobs are designed to be non-blocking (steps are `continue-on-error: true` and artifacts are uploaded) so they notify about regressions without preventing merges.
 
 Next steps:
