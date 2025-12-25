@@ -28,6 +28,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.0.2
+      vitest:
+        specifier: ^1.0.0
+        version: 1.0.0
 
   libs/auth:
     dependencies:
@@ -62,6 +65,20 @@ importers:
         version: 1.0.0
 
   packages/common: {}
+
+  packages/config: {}
+
+  packages/core: {}
+
+  packages/http-client:
+    dependencies:
+      node-fetch:
+        specifier: ^3.3.2
+        version: 3.3.2
+
+  packages/sdk-weapp: {}
+
+  packages/sdk-web: {}
 
   packages/shared-api:
     devDependencies:

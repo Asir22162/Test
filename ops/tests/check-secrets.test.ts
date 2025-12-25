@@ -3,8 +3,8 @@ import path from 'path';
 
 describe('ops/check-secrets.js', () => {
   it('warns when GITHUB_TOKEN is missing', () => {
-    const tmp = process.cwd();
-    const res = spawnSync(process.execPath, [path.resolve(tmp, 'ops', 'check-secrets.js')], {
+    const script = path.resolve(__dirname, '..', 'check-secrets.js');
+    const res = spawnSync(process.execPath, [script], {
       env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_TOKEN: '', AUDIT_ALERT_WEBHOOK: '' }
     });
     const out = String(res.stdout) + String(res.stderr);
@@ -14,8 +14,8 @@ describe('ops/check-secrets.js', () => {
   });
 
   it('reports set when secrets present', () => {
-    const tmp = process.cwd();
-    const res = spawnSync(process.execPath, [path.resolve(tmp, 'ops', 'check-secrets.js')], {
+    const script = path.resolve(__dirname, '..', 'check-secrets.js');
+    const res = spawnSync(process.execPath, [script], {
       env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', GITHUB_TOKEN: 'token', AUDIT_ALERT_WEBHOOK: 'https://hooks.example' }
     });
     const out = String(res.stdout) + String(res.stderr);

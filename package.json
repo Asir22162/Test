@@ -15,16 +15,20 @@
     "test": "pnpm -w -r run test",
     "bootstrap": "pnpm install",
     "generate-types": "pnpm -w -r --filter packages/shared-api... run generate-types",
-    "precommit:generate-types-check": "pnpm --filter packages/shared-api... run generate-types-check"
+    "precommit:generate-types-check": "pnpm --filter packages/shared-api... run generate-types-check",
+    "prepare": "husky install",
+    "lint:fix": "pnpm -w -r run lint:fix",
+    "prepare:h": "husky install && npx husky add .husky/pre-commit 'pnpm -w -r run lint:fix'"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
+    "@pact-foundation/pact": "^10.0.0",
     "eslint": "^8.0.0",
-    "prettier": "^2.0.0",
-    "turbo": "^1.4.0",
     "husky": "^8.0.0",
     "lint-staged": "^13.0.0",
-    "@pact-foundation/pact": "^10.0.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "prettier": "^2.0.0",
+    "turbo": "^1.4.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
   }
 }
