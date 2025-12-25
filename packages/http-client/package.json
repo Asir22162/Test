@@ -5,9 +5,13 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "echo 'build http-client'",
-    "test": "vitest"
+    "test": "vitest src --run"
   },
   "dependencies": {
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "nock": "^13.3.0",
+    "vitest": "^1.0.0"
   }
 }
