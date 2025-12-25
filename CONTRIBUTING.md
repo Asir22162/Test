@@ -19,6 +19,17 @@
 
   pnpm -w -r run test
 
+
+本地开发环境（Node 版本）:
+
+- 推荐使用 **Node 20.x** 作为本地开发基线。为避免版本不一致导致的 CI/构建差异，请在本地切换到 Node 20。
+- 推荐方式（跨平台、用户级）: **Volta**。
+  - 安装（Windows 示例）：`winget install Volta.Volta -e --silent` 或参见 https://volta.sh
+  - 切换到 Node 20：`volta install node@20`
+- Windows 可选：使用 **nvm-windows**（CoreyButler.NVMforWindows）：`nvm install 20.19.6 && nvm use 20.19.6`。
+- 我们在仓库根目录提供 `.nvmrc`（内容为 `20`），多数工具会读取此文件以选取合适的 Node 版本。
+- 验证：`node -v` 应显示 `v20.x.x`，之后请运行上面的 lint/test 命令确认环境正常。
+
 可选项：
 - 如果不确定是否需要更新 types，请在 PR 中 @ 相关负责人进行复核。
 
