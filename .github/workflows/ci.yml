@@ -216,8 +216,59 @@ jobs:
           name: api-smoke-results
           path: apps/api/test-artifacts/**
 
+  smoke-api-mysql:
+    name: Smoke — apps/api (MySQL)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: weapp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install
+        run: |
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          pnpm install --frozen-lockfile
+      - name: Build apps/api
+        run: pnpm -C apps/api run build
+      - name: Install mysql client
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" && break || sleep 1; done
+      - name: Run migrations against MySQL
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: root
+          DB_NAME: weapp
+        run: |
+          mkdir -p apps/api/test-artifacts
+          node -e "require('./apps/api/dist/data-source').AppDataSource.initialize().then(ds=>ds.runMigrations()).then(()=>{console.log('migrations ran OK');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+      - name: Dump migration tables
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e "SHOW TABLES" > apps/api/test-artifacts/mysql-tables.txt || true
+      - name: Upload api-mysql artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-mysql-results
+          path: apps/api/test-artifacts/**
+
   build:
-    needs: smoke-logging
+    needs: [smoke-logging, smoke-api, smoke-api-mysql]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
