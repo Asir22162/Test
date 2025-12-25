@@ -23,7 +23,7 @@
 版本基线（重要）:
 
 - Java: **JDK 17**（后端服务与构建基线）。请使用 Java 17 进行本地构建与 CI 验证。
-- Spring Boot: **3.5.9**（若仓库含 Spring 服务，请固定在父 POM/依赖管理中）。
+- Spring Boot: **3.5.9**（若仓库含 Spring 服务，请固定在父 POM/依赖管理中）。参见 `docs/recipes/spring-boot-setup.md` 获取示例与本地 CLI 安装方法。
 - Maven: **3.9+**（推荐使用 Maven Wrapper）。
 - MySQL: **8.4 (LTS)**（本地与 CI 优先使用 8.4.x 补丁，若镜像暂不可用可回退到 8.0.x）。
 - Redis: **8.2.2+**（安全修复基线）。

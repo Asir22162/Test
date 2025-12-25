@@ -380,6 +380,40 @@ jobs:
           name: node22-compatibility
           path: packages/**/test-artifacts/** || true
 
+  check-spring-boot:
+    name: Check Spring Boot version(s)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find and validate pom.xml files
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Scanning for pom.xml files..."
+          found=0
+          for p in $(git ls-files '**/pom.xml' || true); do
+            echo "Checking $p"
+            # Check parent declaration
+            if grep -q "<artifactId>spring-boot-starter-parent</artifactId>" "$p" || grep -q "<artifactId>spring-boot-dependencies</artifactId>" "$p"; then
+              # try to extract an explicit version
+              ver=$(awk 'NR<=140 {print} /<artifactId>spring-boot-starter-parent</ {found=1} found && /<version>/ {match($0, /<version>([^<]+)<\/version>/, a); if (a[1] != "") {print a[1]; exit}}' "$p" || true)
+              if [ -z "$ver" ]; then
+                ver=$(grep -oP '(?<=<spring.boot.version>).*?(?=</spring.boot.version>)' "$p" || true)
+              fi
+              if [ -n "$ver" ] && [ "$ver" != "3.5.9" ]; then
+                echo "ERROR: $p references Spring Boot version $ver (expected 3.5.9)"
+                found=1
+              fi
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            echo "One or more pom.xml files do not reference Spring Boot 3.5.9. Failing check.";
+            exit 1
+          else
+            echo "All detected pom.xml files either do not reference Spring Boot parent/bom or reference 3.5.9.";
+          fi
+
   mysql-smoke:
     name: MySQL — smoke (compat)
     runs-on: ubuntu-latest
