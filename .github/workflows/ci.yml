@@ -427,3 +427,44 @@ jobs:
           name: mysql-smoke-results
           path: packages/logging/test-artifacts/mysql-smoke.log || true
 
+  redis-smoke:
+    name: Redis — smoke (compat)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    services:
+      redis:
+        image: redis:8.2.2
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd='redis-cli ping'
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install redis tools
+        run: sudo apt-get update && sudo apt-get install -y redis-tools
+      - name: Prepare artifact dir
+        run: mkdir -p packages/logging/test-artifacts
+      - name: Wait for Redis (non-blocking)
+        run: |
+          for i in $(seq 1 60); do
+            if redis-cli -h 127.0.0.1 ping > /tmp/redis_smoke.log 2>&1; then
+              echo "Redis is ready"
+              break
+            fi
+            sleep 1
+          done
+        continue-on-error: true
+      - name: Run Redis smoke (non-blocking)
+        run: |
+          redis-cli -h 127.0.0.1 set smoke_key 1 || true
+          redis-cli -h 127.0.0.1 get smoke_key > packages/logging/test-artifacts/redis-smoke.log 2>&1 || true
+        continue-on-error: true
+      - name: Upload Redis smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-smoke-results
+          path: packages/logging/test-artifacts/redis-smoke.log || true
+
