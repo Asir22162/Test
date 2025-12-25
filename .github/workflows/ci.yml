@@ -193,6 +193,8 @@ jobs:
           pnpm install --frozen-lockfile
       - name: Build apps/api
         run: pnpm -C apps/api run build || true
+      - name: Run migration check (sqlite)
+        run: pnpm -C apps/api run migrate:check
       - name: Run API smoke (healthcheck)
         shell: bash
         continue-on-error: true
