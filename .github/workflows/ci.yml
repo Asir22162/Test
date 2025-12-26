@@ -1000,6 +1000,8 @@ PY
           fi
           pnpm install --no-frozen-lockfile
           pnpm -v || true
+      - name: Setup Java (check baseline)
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
