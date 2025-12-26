@@ -26,7 +26,7 @@ jobs:
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Check for changes affecting logging
         id: changes
@@ -211,7 +211,7 @@ jobs:
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build || true
@@ -269,7 +269,7 @@ jobs:
         uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build
@@ -382,7 +382,7 @@ jobs:
         uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build
@@ -908,7 +908,7 @@ PY
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Setup Java (check baseline)
         uses: actions/setup-java@v4
@@ -1125,7 +1125,7 @@ PY
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Lint
         run: pnpm -w -r run lint

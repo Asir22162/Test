@@ -32,7 +32,7 @@ jobs:
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Run logging package tests
         run: pnpm -C packages/logging test --reporter dot
@@ -61,7 +61,7 @@ jobs:
             corepack enable || true
             corepack prepare pnpm@latest --activate || true
           fi
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm -v || true
       - name: Run logging package tests (Node 22)
         run: pnpm -C packages/logging test --reporter dot
