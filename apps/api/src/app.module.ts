@@ -20,6 +20,6 @@ import { HealthController } from './health.controller';
     UsersModule,
     AuthModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, MetricsController],
 })
 export class AppModule {}

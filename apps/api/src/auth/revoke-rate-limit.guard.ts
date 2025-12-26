@@ -62,11 +62,15 @@ export class RevokeRateLimitGuard implements CanActivate {
         resObj.setHeader('X-RateLimit-Reset', String(reset))
       }
 
+      // emit metrics
+      try { require('../metrics').authMetrics.inc('auth_revoke_rate_allowed') } catch (e) {}
       if (allowed) return true
+      try { require('../metrics').authMetrics.inc('auth_revoke_rate_denied') } catch (e) {}
       throw new TooManyRequestsException('Rate limit exceeded')
     } catch (e) {
       // On Redis errors, fallback to allowing requests (fail-open) but log
       console.error('Redis rate limiter error:', e?.message || e)
+      try { require('../metrics').authMetrics.inc('auth_revoke_rate_redis_errors') } catch (err) {}
       return true
     }
   }

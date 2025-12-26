@@ -85,4 +85,5 @@ export type { AsyncFileAdapterOptions, AsyncFileAdapterMetrics } from './adapter
 export { createHttpAdapter } from './adapters/http'
 export type { HttpAdapterOptions, HttpAdapterMetrics } from './adapters/http'
 export { PrometheusRegistry } from './prometheus'
+export { registerRegistry, getSnapshot } from './metrics/collector'
 

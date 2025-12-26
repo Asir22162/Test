@@ -208,6 +208,8 @@ jobs:
           else
             echo "API_SMOKE_FAILED=1" >> $GITHUB_ENV
           fi
+          # capture metrics snapshot if available
+          curl -sS http://127.0.0.1:3000/metrics > apps/api/test-artifacts/metrics.txt || true
           kill $APP_PID || true
       - name: Upload api smoke artifacts
         if: always()
@@ -329,6 +331,8 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: |
           pnpm -C apps/api test -- -t "auth e2e"
+          # capture metrics from running app
+          curl -sS http://127.0.0.1:3000/metrics > apps/api/test-artifacts/metrics.txt || true
       - name: Upload api-e2e artifacts
         if: always()
         uses: actions/upload-artifact@v4

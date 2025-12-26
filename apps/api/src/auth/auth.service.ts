@@ -14,7 +14,9 @@ export class AuthServiceNest {
   private makeAuth() {
     const jwt = new JWT({ secret: process.env.AUTH_SECRET || 'dev-secret', expiresIn: '15m' })
     const store = new TypeOrmRefreshStore(AppDataSource as any)
-    return new AuthService(jwt, { refreshTTLSeconds: 60 * 60 * 24 * 7, refreshStore: store })
+    // attach metrics registry so auth service emits metrics
+    const metrics = require('../metrics').authMetrics
+    return new AuthService(jwt, { refreshTTLSeconds: 60 * 60 * 24 * 7, refreshStore: store, metricsRegistry: metrics })
   }
 
   async login(username: string) {
