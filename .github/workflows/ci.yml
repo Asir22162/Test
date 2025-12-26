@@ -340,6 +340,27 @@ jobs:
           name: api-e2e-results
           path: apps/api/test-artifacts/**
 
+      - name: Comment on PR if e2e failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              const path = 'apps/api/test-artifacts/metrics.txt'
+              if (fs.existsSync(path)) {
+                summary = fs.readFileSync(path,'utf8').split('\n').slice(0,50).join('\n')
+                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
+            if (pr) {
+              const body = `⚠️ API e2e smoke check failed.\n\n**Metrics snapshot (first lines):**\n\n${summary || '(no metrics snapshot)'}\n\n**Artifacts uploaded:** **api-e2e-results**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+
   smoke-grafana-provisioning:
     name: Smoke — Grafana provisioning
     runs-on: ubuntu-latest
@@ -481,6 +502,32 @@ PY
         with:
           name: grafana-failed-dashboards
           path: grafana-dashboards-failed.tar.gz
+
+      - name: Write provisioning summary JSON
+        if: always()
+        run: |
+          python3 - <<'PY'
+import json, os
+summary = ''
+if os.path.exists('grafana-provisioning/summary.txt'):
+    summary = open('grafana-provisioning/summary.txt','r', encoding='utf8').read()
+# get grafana logs tail
+try:
+    glogs = os.popen('docker logs ci-grafana --tail 200 2>/dev/null').read()
+except Exception:
+    glogs = ''
+failed_dashboards = []
+if os.path.isdir('grafana-dashboards-failed'):
+    failed_dashboards = [f for f in os.listdir('grafana-dashboards-failed')]
+obj = {
+    'summary_text': summary[:4000],
+    'errors': summary.splitlines()[-50:],
+    'failed_dashboards': failed_dashboards,
+    'grafana_logs_tail': glogs[-8000:]
+}
+open('grafana-provisioning/summary.json','w', encoding='utf8').write(json.dumps(obj))
+print('wrote grafana-provisioning/summary.json')
+PY
 
       - name: Upload provisioning snapshot artifact
         if: failure()
@@ -661,6 +708,30 @@ PY
       - name: Push sample metrics
         run: |
           node docs/grafana/push-sample-metrics.js
+
+      - name: Capture prometheus snapshot & write demo summary
+        run: |
+          mkdir -p grafana-demo || true
+          # save prometheus query result
+          curl -sS "http://127.0.0.1:9090/api/v1/query?query=auth_revoke_count" > grafana-demo/prom_query.json || true
+          # get tails of logs
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 > grafana-demo/prometheus.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 > grafana-demo/pushgateway.log || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 > grafana-demo/grafana.log || true
+          python3 - <<'PY'
+import json,os
+q=''
+if os.path.exists('grafana-demo/prom_query.json'):
+    q=open('grafana-demo/prom_query.json').read()
+prom_lines = ''
+if os.path.exists('grafana-demo/prometheus.log'):
+    prom_lines=open('grafana-demo/prometheus.log').read()[-4000:]
+obj={'prom_query': json.loads(q) if q else {}, 'prometheus_log_tail': prom_lines}
+open('grafana-demo/summary.json','w', encoding='utf8').write(json.dumps(obj))
+open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:2000])
+print('wrote grafana-demo summary')
+PY
+
       - name: Wait for Prometheus to scrape sample metric
         run: |
           for i in $(seq 1 30); do
@@ -702,15 +773,30 @@ PY
           name: grafana-demo-logs
           path: grafana-demo-logs/**
 
+      - name: Upload demo summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-demo-summary
+          path: grafana-demo/**
+
       - name: Comment on PR if grafana demo failed
         if: failure() && github.event_name == 'pull_request'
         uses: actions/github-script@v6
         with:
           script: |
+            const fs = require('fs')
             const pr = github.context.payload.pull_request
             const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              if (fs.existsSync('grafana-demo/summary.txt')) {
+                summary = fs.readFileSync('grafana-demo/summary.txt', 'utf8')
+                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
             if (pr) {
-              const body = `⚠️ Grafana demo smoke check failed.\n\nArtifact uploaded: **grafana-demo-logs**.\n\nRun details: ${runUrl}\n\nPlease download the artifact from the run to debug.`
+              const body = `⚠️ Grafana demo smoke check failed.\n\n**Summary:**\n\n${summary || '(no short summary available)'}\n\n**Artifacts uploaded:** **grafana-demo-logs**, **grafana-demo**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
               await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
             }
       - name: Teardown
