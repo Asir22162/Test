@@ -374,6 +374,8 @@ jobs:
       - name: Check dashboard UID exists
         if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
         run: |
+          mkdir -p grafana-provisioning || true
+          echo "Provisioning check started: $(date)" > grafana-provisioning/summary.txt || true
           echo "Checking Grafana for dashboard UID: auth-token-revoke-dashboard"
           for i in $(seq 1 30); do
             status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin http://127.0.0.1:3000/api/dashboards/uid/auth-token-revoke-dashboard || true)
@@ -381,11 +383,13 @@ jobs:
             if [ "$status" = "200" ]; then
               echo "DASHBOARD_FOUND=1" >> $GITHUB_ENV
               echo "Grafana provisioning OK — dashboard found"
+              echo "Dashboard uid 'auth-token-revoke-dashboard' found" >> grafana-provisioning/summary.txt || true
               exit 0
             fi
             sleep 2
           done
           echo "::error ::Dashboard UID auth-token-revoke-dashboard not found"
+          echo "Dashboard uid 'auth-token-revoke-dashboard' not found" >> grafana-provisioning/summary.txt || true
           echo "Grafana logs (tail 200):"
           docker logs ci-grafana --tail 200 || true
           exit 1
@@ -462,6 +466,8 @@ PY
 
           if [ "$missing" -ne 0 ]; then
             echo "One or more dashboards not provisioned. See $failed_dir for JSON files"
+            echo "Missing dashboards:" >> grafana-provisioning/summary.txt || true
+            ls "$failed_dir" -1 >> grafana-provisioning/summary.txt || true
             tar -czf "$failed_dir.tar.gz" -C "$failed_dir" . || true
             ls -la "$failed_dir" || true
             docker logs ci-grafana --tail 200 || true
@@ -494,10 +500,19 @@ PY
         uses: actions/github-script@v6
         with:
           script: |
+            const fs = require('fs')
             const pr = github.context.payload.pull_request
             const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              if (fs.existsSync('grafana-provisioning/summary.txt')) {
+                summary = fs.readFileSync('grafana-provisioning/summary.txt', 'utf8')
+                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
+
             if (pr) {
-              const body = `⚠️ Grafana provisioning smoke check failed.\n\nArtifacts uploaded: **grafana-provisioning**, **grafana-provisioning-logs**, **grafana-failed-dashboards**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              const body = `⚠️ Grafana provisioning smoke check failed.\n\n**Summary:**\n\n${summary || '(no short summary available)'}\n\n**Artifacts uploaded:** **grafana-provisioning**, **grafana-provisioning-logs**, **grafana-failed-dashboards**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
               await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
             }
 
@@ -557,6 +572,7 @@ PY
                 if [ -n "$typ" ] && [ "$typ" != "$actual_type" ]; then
                   echo "::error ::Datasource $name has type '${actual_type}', expected '${typ}'"
                   echo "Datasource JSON: $ds_json"
+                  echo "Datasource $name type mismatch: actual='${actual_type}', expected='${typ}'" >> grafana-provisioning/summary.txt || true
                   docker logs ci-grafana --tail 200 || true
                   exit 1
                 fi
@@ -573,6 +589,7 @@ PY
                   if [ "$norm_expected" != "$norm_actual" ]; then
                     echo "::error ::Datasource $name url mismatch: actual='$actual_url' expected='$url'"
                     echo "Datasource JSON: $ds_json"
+                    echo "Datasource $name url mismatch: actual='${actual_url}', expected='${url}'" >> grafana-provisioning/summary.txt || true
                     docker logs ci-grafana --tail 200 || true
                     exit 1
                   fi
@@ -598,6 +615,7 @@ PY
             done
             if [ "$ds_status" != "200" ]; then
               echo "::error ::Datasource $name not found"
+              echo "Datasource $name not found in Grafana API" >> grafana-provisioning/summary.txt || true
               docker logs ci-grafana --tail 200 || true
               exit 1
             fi
