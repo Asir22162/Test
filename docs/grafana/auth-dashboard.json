@@ -54,6 +54,37 @@
       "gridPos": {"h": 4, "w": 18, "x": 0, "y": 12},
       "datasource": "${DS_PROMETHEUS}",
       "targets": [{ "expr": "avg(auth_tokenbucket_remaining{service=~\"$service\",instance=~\"$instance\"})" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top Users by Revokes",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 16},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "topk($topk, sum by (user) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m])))", "legendFormat": "{{user}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Revokes by Team / Service",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 16},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        { "expr": "sum by (team) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m]))", "legendFormat": "team {{team}}" },
+        { "expr": "sum by (service) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m]))", "legendFormat": "service {{service}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Latency (example)",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 22},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(redis_command_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top Users Denied (by revokes denied)",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 22},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "topk($topk, sum by (user) (rate(auth_revoke_rate_denied{env=~\"$env\",service=~\"$service\"}[5m])))", "legendFormat": "{{user}}" }]
     }
   ],
   "schemaVersion": 36,
@@ -94,6 +125,31 @@
         "allValue": ".*",
         "refresh": 2,
         "includeAll": true
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "query": "label_values(region)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "team",
+        "type": "query",
+        "label": "Team",
+        "query": "label_values(team)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "topk",
+        "type": "textbox",
+        "label": "Top N",
+        "query": "10",
+        "current": { "text": "10", "value": "10" }
       }
     ]
   },

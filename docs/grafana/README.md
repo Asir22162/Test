@@ -8,6 +8,18 @@ Files:
   - **${env}** (environment label)
   - **${service}** (service name)
   - **${instance}** (instance/host)
+  - **${region}** (optional region label)
+  - **${team}** (optional team label)
+  - **${topk}** (top N for rank panels, default 10)
+
+Notes on panels:
+- **Top Users by Revokes**: shows top N users producing revoke events; requires `user` label on `auth_revoke_count` metric.
+- **Revokes by Team / Service**: aggregate by `team` and `service` labels to spot which teams/services generate most revokes.
+- **Redis Latency**: example panel using `redis_command_duration_seconds` histogram; adjust based on your Redis metrics.
+
+Tips:
+- Ensure your services emit labels (`env`, `service`, `team`, `region`, `user`) on auth metrics for these panels to work effectively.
+- You can edit the `${topk}` variable after import to show Top 5/10/20.
 
 - `alerts-auth.rules.yml` — Example Prometheus alerting rules to add to your Prometheus server (or Alertmanager).
 
