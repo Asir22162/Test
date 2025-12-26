@@ -13,10 +13,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Check for changes affecting logging
         id: changes
         uses: dorny/paths-filter@v2
@@ -187,10 +189,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build || true
       - name: Run migration check (sqlite)
@@ -239,10 +243,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build
       - name: Install mysql client
@@ -351,10 +357,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Build apps/api
         run: pnpm -C apps/api run build
       - name: Install mysql client
@@ -871,10 +879,12 @@ PY
         with:
           node-version: '20'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Setup Java (check baseline)
         uses: actions/setup-java@v4
         with:
@@ -1082,10 +1092,12 @@ PY
         with:
           node-version: '22'
           cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
           pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Lint
         run: pnpm -w -r run lint
       - name: Test (Node 22)

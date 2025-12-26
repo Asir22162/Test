@@ -19,11 +19,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
-      - name: Install pnpm
-        run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Run logging package tests
         run: pnpm -C packages/logging test --reporter dot
 
@@ -38,11 +39,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-      - name: Install pnpm
-        run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -v || true
       - name: Run logging package tests (Node 22)
         run: pnpm -C packages/logging test --reporter dot
         continue-on-error: true
