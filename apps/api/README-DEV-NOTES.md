@@ -9,4 +9,5 @@ Dev notes / next steps for this scaffold
 - Consider adding a migration runner to CI that exercises migrations against a MySQL instance for full compatibility verification if needed.
 - Add auth module and integrate `libs/auth` for token issuance/validation.
 - Expose `POST /auth/revoke` to revoke refresh tokens; tests include unit and e2e flows (login → refresh → revoke → refresh should fail).
+- Run e2e tests locally: `pnpm -C apps/api run build && pnpm -C apps/api test` (build required because e2e spins up `dist/main.js`).
 - Add provider for secrets & config (Vault/KMS) and Dockerfile + docker-compose for local DB.
