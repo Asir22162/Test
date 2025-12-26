@@ -23,9 +23,16 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
           pnpm -v || true
+          which pnpm || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Debug: environment and registry reachability
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
           (
@@ -52,15 +59,23 @@ jobs:
         with:
           name: debug-info-${{ github.job }}
           path: debug/debug-info.txt
-      - name: Install dependencies
+      - name: Install dependencies (capture pnpm logs)
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
             echo "pnpm not found; enabling via corepack and preparing pnpm..."
             corepack enable || true
             corepack prepare pnpm@10.26.2 --activate || true
           fi
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
 
   test-logging-node22:
     name: Test packages/logging (Node 22 compatibility)
@@ -77,16 +92,25 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
           pnpm -v || true
+          which pnpm || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Install dependencies
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: Install dependencies (capture pnpm logs)
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
             echo "pnpm not found; enabling via corepack and preparing pnpm..."
             corepack enable || true
             corepack prepare pnpm@10.26.2 --activate || true
           fi
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
       - name: Run logging package tests (Node 22)
         run: pnpm -C packages/logging test --reporter dot
