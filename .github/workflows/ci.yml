@@ -3,6 +3,42 @@ name: CI
 on: [push, pull_request]
 
 jobs:
+  debug-environment:
+    name: Debug — environment (uploads artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Debug and upload
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o debug/debug-info.json || true
+          ) 2>&1 | tee debug/debug-info.txt
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-environment
+          path: debug/**
+
   smoke-logging:
     name: Smoke — packages/logging
     runs-on: ubuntu-latest
