@@ -78,11 +78,11 @@ jobs:
                 }
                 body += summary
                 body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```
-" + (content.substring(0, 10000) || '') + "\n```\n</details>"
+" + (content.substring(0, 5000) || '') + "\n```\n</details>"
               } catch (e) {
                 const content = fs.readFileSync(resultsPath, 'utf8')
                 body += "\n\n<details><summary>Test results (raw)</summary>\n\n```
-" + content.substring(0, 10000) + "\n```\n</details>"
+" + content.substring(0, 5000) + "\n```\n</details>"
               }
             }
 
@@ -150,12 +150,12 @@ jobs:
                 if (rows.length > 200) body += `\n*(Only first 200 metrics shown)*\n`
               } else {
                 body += "\n\n**Metrics snapshot:**\n\n```
-" + m.substring(0,4000) + "\n```"
+" + m.substring(0,5000) + "\n```"
               }
 
               // add a link to the run so reviewers can download artifacts
-              const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
-              body += `\n\nArtifacts for this run are available: [View artifacts & logs](${runUrl})`
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              body += `\n\n**Artifacts:** **logging-smoke-results** (attached to workflow run)\n\nRun: ${runUrl}`
             }
 
             const pr = github.context.payload.pull_request
@@ -251,6 +251,8 @@ jobs:
         run: |
           for i in $(seq 1 30); do mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" && break || sleep 1; done
       - name: Run migrations against MySQL
+        shell: bash
+        continue-on-error: true
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
@@ -260,14 +262,66 @@ jobs:
         run: |
           mkdir -p apps/api/test-artifacts
           node -e "require('./apps/api/dist/data-source').AppDataSource.initialize().then(ds=>ds.runMigrations()).then(()=>{console.log('migrations ran OK');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+          echo "$?" > apps/api/test-artifacts/migrations-exitcode
+          if [ "$(cat apps/api/test-artifacts/migrations-exitcode)" -ne 0 ]; then
+            echo "MIGRATIONS_FAILED=1" >> $GITHUB_ENV
+          fi
+          # create a short summary
+          if [ -f apps/api/test-artifacts/migrations-exitcode ]; then
+            code=$(cat apps/api/test-artifacts/migrations-exitcode)
+            if [ "$code" -eq 0 ]; then
+              echo "Migrations ran: OK" > apps/api/test-artifacts/summary.txt
+            else
+              echo "Migrations ran: FAIL (exitcode=$code)" > apps/api/test-artifacts/summary.txt
+            fi
+          else
+            echo "Migrations: unknown (no exit code captured)" > apps/api/test-artifacts/summary.txt
+          fi
+          # include table listing if available
+          if [ -f apps/api/test-artifacts/mysql-tables.txt ]; then
+            echo "" >> apps/api/test-artifacts/summary.txt
+            echo "Tables:" >> apps/api/test-artifacts/summary.txt
+            tail -n 200 apps/api/test-artifacts/mysql-tables.txt >> apps/api/test-artifacts/summary.txt || true
+          fi
       - name: Dump migration tables
         run: |
           mysql -h 127.0.0.1 -uroot -proot -e "SHOW TABLES" > apps/api/test-artifacts/mysql-tables.txt || true
       - name: Upload api-mysql artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: api-mysql-results
           path: apps/api/test-artifacts/**
+      - name: Write api-mysql summary JSON
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          p='apps/api/test-artifacts/summary.txt'
+          summary = open(p,'r',encoding='utf8').read() if os.path.exists(p) else ''
+          open('apps/api/test-artifacts/summary.json','w',encoding='utf8').write(json.dumps({'summary': summary}))
+          print('wrote apps/api/test-artifacts/summary.json')
+          PY
+      - name: Comment on PR if smoke-mysql failed
+        if: ${{ env.MIGRATIONS_FAILED == '1' && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const summaryPath = 'apps/api/test-artifacts/summary.txt'
+            let body = '⚠️ Smoke — `apps/api` (MySQL) migrations failed.'
+            if (fs.existsSync(summaryPath)) {
+              const s = fs.readFileSync(summaryPath,'utf8')
+              body += `\n\n**Summary:**\n\n```\n${s.substring(0,5000)}\n```\n`
+            }
+            body += `\n\nArtifacts: **api-mysql-results** (attached to workflow run)\n\nRun: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+            github.rest.issues.createComment({
+              issue_number: context.payload.pull_request.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
 
   smoke-api-e2e:
     name: Smoke — apps/api (e2e)
@@ -353,11 +407,12 @@ jobs:
               const path = 'apps/api/test-artifacts/metrics.txt'
               if (fs.existsSync(path)) {
                 summary = fs.readFileSync(path,'utf8').split('\n').slice(0,50).join('\n')
-                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
               }
             } catch (e) { /* ignore */ }
             if (pr) {
-              const body = `⚠️ API e2e smoke check failed.\n\n**Metrics snapshot (first lines):**\n\n${summary || '(no metrics snapshot)'}\n\n**Artifacts uploaded:** **api-e2e-results**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ API e2e smoke check failed.\n\n**Metrics snapshot (first lines):**\n\n```\n${summary || '(no metrics snapshot)'}\n```\n\n**Artifacts:** **api-e2e-results** (attached to workflow run).\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
               await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
             }
 
@@ -520,7 +575,7 @@ failed_dashboards = []
 if os.path.isdir('grafana-dashboards-failed'):
     failed_dashboards = [f for f in os.listdir('grafana-dashboards-failed')]
 obj = {
-    'summary_text': summary[:4000],
+    'summary_text': summary[:5000],
     'errors': summary.splitlines()[-50:],
     'failed_dashboards': failed_dashboards,
     'grafana_logs_tail': glogs[-8000:]
@@ -554,12 +609,13 @@ PY
             try {
               if (fs.existsSync('grafana-provisioning/summary.txt')) {
                 summary = fs.readFileSync('grafana-provisioning/summary.txt', 'utf8')
-                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
               }
             } catch (e) { /* ignore */ }
 
             if (pr) {
-              const body = `⚠️ Grafana provisioning smoke check failed.\n\n**Summary:**\n\n${summary || '(no short summary available)'}\n\n**Artifacts uploaded:** **grafana-provisioning**, **grafana-provisioning-logs**, **grafana-failed-dashboards**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ Grafana provisioning smoke check failed.\n\n**Summary:**\n\n```\n${summary || '(no short summary available)'}\n```\n\n**Artifacts:** **grafana-provisioning** (attached to workflow run)\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
               await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
             }
 
@@ -725,10 +781,10 @@ if os.path.exists('grafana-demo/prom_query.json'):
     q=open('grafana-demo/prom_query.json').read()
 prom_lines = ''
 if os.path.exists('grafana-demo/prometheus.log'):
-    prom_lines=open('grafana-demo/prometheus.log').read()[-4000:]
+    prom_lines=open('grafana-demo/prometheus.log').read()[-5000:]
 obj={'prom_query': json.loads(q) if q else {}, 'prometheus_log_tail': prom_lines}
 open('grafana-demo/summary.json','w', encoding='utf8').write(json.dumps(obj))
-open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:2000])
+open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:5000])
 print('wrote grafana-demo summary')
 PY
 
@@ -792,11 +848,12 @@ PY
             try {
               if (fs.existsSync('grafana-demo/summary.txt')) {
                 summary = fs.readFileSync('grafana-demo/summary.txt', 'utf8')
-                if (summary.length > 800) summary = summary.substring(0,800) + '\n... (truncated)'
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
               }
             } catch (e) { /* ignore */ }
             if (pr) {
-              const body = `⚠️ Grafana demo smoke check failed.\n\n**Summary:**\n\n${summary || '(no short summary available)'}\n\n**Artifacts uploaded:** **grafana-demo-logs**, **grafana-demo**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ Grafana demo smoke check failed.\n\n**Summary:**\n\n```\n${summary || '(no short summary available)'}\n```\n\n**Artifacts:** **grafana-demo-logs**, **grafana-demo** (attached to workflow run).\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
               await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
             }
       - name: Teardown
