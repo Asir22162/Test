@@ -26,8 +26,17 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
 
-      - name: Install dependencies
-        run: pnpm install --recursive --silent
+      - name: Install dependencies (capture pnpm logs)
+        run: |
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --recursive --silent 2>&1 | tee -a debug/pnpm-install.txt || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
 
       - name: Run ops tests
         env:
