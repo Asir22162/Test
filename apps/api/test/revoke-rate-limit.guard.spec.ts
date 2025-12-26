@@ -14,11 +14,13 @@ describe('RevokeRateLimitGuard (unit)', () => {
   it('allows below limit using redis mock', async () => {
     let store: Record<string, number> = {}
     const mockRedis = {
-      incr: async (k: string) => {
+      evalsha: async (_sha: string, numKeys: number, k: string, max: string, refill: string, now: string) => {
         store[k] = (store[k] || 0) + 1
-        return store[k]
+        // simulate allowed until >5
+        const allowed = store[k] <= 5 ? 1 : 0
+        const tokens = Math.max(0, 5 - store[k])
+        return [allowed, String(tokens), '0']
       },
-      expire: async () => true
     }
 
     const guard = new RevokeRateLimitGuard(mockRedis)
@@ -33,11 +35,12 @@ describe('RevokeRateLimitGuard (unit)', () => {
   it('blocks when above limit using redis mock', async () => {
     let store: Record<string, number> = {}
     const mockRedis = {
-      incr: async (k: string) => {
+      evalsha: async (_sha: string, numKeys: number, k: string, max: string, refill: string, now: string) => {
         store[k] = (store[k] || 0) + 1
-        return store[k]
+        const allowed = store[k] <= 5 ? 1 : 0
+        const tokens = Math.max(0, 5 - store[k])
+        return [allowed, String(tokens), '0']
       },
-      expire: async () => true
     }
 
     const guard = new RevokeRateLimitGuard(mockRedis)

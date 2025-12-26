@@ -38,13 +38,32 @@ export class RevokeRateLimitGuard implements CanActivate {
     }
 
     try {
-      // INCR the counter and set expiry if first
-      const n = await this.redis.incr(key)
-      if (n === 1) {
-        await this.redis.expire(key, WINDOW_SECONDS)
+      const { runTokenBucket } = require('../redis.client')
+      const tbRes: any = await runTokenBucket(this.redis, key, MAX_REQUESTS, WINDOW_SECONDS)
+      // tbRes => [allowed, tokens, reset]
+      let allowed = false
+      let remaining = 0
+      let reset = 0
+      if (Array.isArray(tbRes)) {
+        allowed = Number(tbRes[0]) === 1
+        remaining = Number(tbRes[1]) || 0
+        reset = Number(tbRes[2]) || 0
+      } else if (tbRes && typeof tbRes === 'object') {
+        // some clients may return objects
+        allowed = Number(tbRes.allowed) === 1
+        remaining = Number(tbRes.tokens) || 0
+        reset = Number(tbRes.reset) || 0
       }
-      if (n > MAX_REQUESTS) throw new TooManyRequestsException('Rate limit exceeded')
-      return true
+
+      // set helpful headers when possible
+      const resObj = context.switchToHttp().getResponse()
+      if (resObj && resObj.setHeader) {
+        resObj.setHeader('X-RateLimit-Remaining', String(remaining))
+        resObj.setHeader('X-RateLimit-Reset', String(reset))
+      }
+
+      if (allowed) return true
+      throw new TooManyRequestsException('Rate limit exceeded')
     } catch (e) {
       // On Redis errors, fallback to allowing requests (fail-open) but log
       console.error('Redis rate limiter error:', e?.message || e)
