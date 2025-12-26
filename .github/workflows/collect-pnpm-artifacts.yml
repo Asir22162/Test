@@ -1,0 +1,109 @@
+name: Collect pnpm artifacts and summarize
+
+on:
+  workflow_run:
+    workflows: ["CI", "Test — packages/logging", "Suggest fixes (dry-run)"]
+    types: [completed]
+
+jobs:
+  collect-and-parse:
+    name: Collect artifacts and parse pnpm logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for upload step)
+        uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq unzip
+      - name: Download artifacts for completed run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts downloaded parsed summary
+
+          echo "Listing artifacts for run $RUN_ID..."
+          curl -sS -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/artifacts" > artifacts/list.json
+
+          cat artifacts/list.json | jq -r '.artifacts[] | "id:\(.id) name:\(.name) size:\(.size)"' > artifacts/index.txt || true
+          jq '.artifacts' artifacts/list.json > artifacts/artifacts.json
+
+          # Download artifacts whose names match debug-info-* or pnpm-install-*
+          jq -c '.[]' artifacts/artifacts.json | while read -r a; do
+            id=$(echo "$a" | jq -r '.id')
+            name=$(echo "$a" | jq -r '.name')
+            echo "Found artifact id=$id name=$name"
+            if echo "$name" | grep -E 'debug-info-|pnpm-install-' >/dev/null; then
+              out=downloaded/artifact-${id}.zip
+              echo "Downloading $name -> $out"
+              curl -sS -H "Authorization: token $GITHUB_TOKEN" -L "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" -o "$out"
+              unzip -q "$out" -d "downloaded/artifact-${id}"
+              # Record files extracted
+              ls -la "downloaded/artifact-${id}" > artifacts/extracted-${id}.txt || true
+            else
+              echo "Skipping artifact $name"
+            fi
+          done
+
+      - name: Parse pnpm logs
+        run: |
+          set -euo pipefail
+          echo "Collecting pnpm info and errors..." > summary/pnpm-summary.txt
+          for d in downloaded/*; do
+            if [ -d "$d" ]; then
+              echo "Inspecting $d" >> summary/pnpm-summary.txt
+              # find debug-info.txt or similar
+              if find "$d" -type f -name 'debug-info*' | grep -q .; then
+                for f in $(find "$d" -type f -name 'debug-info*'); do
+                  echo "--- Debug file: $f ---" >> summary/pnpm-summary.txt
+                  echo "Contents preview:" >> summary/pnpm-summary.txt
+                  sed -n '1,120p' "$f" >> summary/pnpm-summary.txt || true
+                  echo "" >> summary/pnpm-summary.txt
+                done
+              fi
+
+              # find pnpm-install logs
+              if find "$d" -type f -name 'pnpm-install*' | grep -q .; then
+                for f in $(find "$d" -type f -name 'pnpm-install*'); do
+                  echo "--- pnpm-install file: $f ---" >> summary/pnpm-summary.txt
+                  # extract first N lines containing ERR_INVALID_THIS and their surrounding context
+                  echo "First occurrences of ERR_INVALID_THIS (with context):" >> summary/pnpm-summary.txt
+                  grep -n -C2 "ERR_INVALID_THIS" "$f" | sed -n '1,200p' >> summary/pnpm-summary.txt || true
+
+                  echo ""
+                  echo "Top 10 request-retry error lines (code ERR_INVALID_THIS):" >> summary/pnpm-summary.txt
+                  grep "ERR_INVALID_THIS" "$f" | sed -n '1,10p' >> summary/pnpm-summary.txt || true
+
+                  echo ""
+                  echo "Tail of install (last 200 lines):" >> summary/pnpm-summary.txt
+                  tail -n 200 "$f" >> summary/pnpm-summary.txt || true
+                done
+              fi
+            fi
+          done
+
+          # Make a machine-parsable JSON summary
+          jq -n --arg run "$RUN_ID" '{run: $run, summary: (input // "no summary")}' > summary/placeholder.json || true
+
+      - name: Upload parsed summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-collector-summary-${{ github.event.workflow_run.id }}
+          path: summary/**
+
+      - name: Comment on PR (if applicable)
+        if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_branch }}
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.workflow_run.pull_requests && github.context.payload.workflow_run.pull_requests[0]
+            if (!pr) return
+            const summary = fs.readFileSync('summary/pnpm-summary.txt','utf8')
+            const body = `Automated pnpm artifact summary for workflow run #${{ github.event.workflow_run.id }}:\n\n` + '```
+' + summary.substring(0, 6000) + '\n```'
+            await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
