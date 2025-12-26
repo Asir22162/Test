@@ -20,6 +20,11 @@ describe('auth e2e', () => {
     expect(json.accessToken).toBeDefined()
     expect(json.refreshToken).toBeDefined()
 
+    // use access token to call protected endpoint
+    const meRes = await fetch('http://127.0.0.1:4002/users/me', { method: 'GET', headers: { 'authorization': `Bearer ${json.accessToken}` } })
+    const meJson = await meRes.json()
+    expect(meJson.id).toBeDefined()
+
     const res2 = await fetch('http://127.0.0.1:4002/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: json.refreshToken }), headers: { 'content-type': 'application/json' } })
     const json2 = await res2.json()
     expect(json2.accessToken).toBeDefined()
