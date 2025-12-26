@@ -112,6 +112,8 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           DEFAULT_BRANCH: ${{ github.event.workflow_run.head_branch || github.event.repository.default_branch }}
+          REVIEWERS: 'Asir22162'
+          LABELS: 'auto:ci'
         run: |
           set -euo pipefail
           # If we found an invalid-this marker, reset counter and exit
@@ -174,7 +176,21 @@ jobs:
 
                 # Create draft PR
                 body=$(printf "Automated PR to restore --frozen-lockfile after pnpm was stable in %d consecutive runs. See collector summary for run %s.\n\nSummary:\n\n$(sed -n '1,800p' ../summary/pnpm-summary.txt)" "$count" "$RUN_ID")
-                curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"title\": \"chore: restore --frozen-lockfile\", \"head\": \"${pr_branch}\", \"base\": \"${DEFAULT_BRANCH}\", \"body\": \"${body//\"/\\\"}\", \"draft\": true}" "https://api.github.com/repos/${REPO}/pulls" || true
+                resp=$(curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"title\": \"chore: restore --frozen-lockfile\", \"head\": \"${pr_branch}\", \"base\": \"${DEFAULT_BRANCH}\", \"body\": \"${body//\"/\\\"}\", \"draft\": true}" "https://api.github.com/repos/${REPO}/pulls" || true)
+                pr_number=$(echo "$resp" | jq -r '.number')
+                if [ "$pr_number" != "null" ] && [ -n "$pr_number" ]; then
+                  echo "Created PR #$pr_number"
+                  # request reviewers if provided
+                  if [ -n "${REVIEWERS:-}" ]; then
+                    reviewers_json=$(printf '%s' "${REVIEWERS}" | jq -R 'split(",") | map(gsub("^ *| *$"; ""))')
+                    curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"reviewers\": $reviewers_json}" "https://api.github.com/repos/${REPO}/pulls/${pr_number}/requested_reviewers" || true
+                  fi
+                  # add labels if provided
+                  if [ -n "${LABELS:-}" ]; then
+                    labels_json=$(printf '%s' "${LABELS}" | jq -R 'split(",") | map(gsub("^ *| *$"; ""))')
+                    curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"labels\": $labels_json}" "https://api.github.com/repos/${REPO}/issues/${pr_number}/labels" || true
+                  fi
+                fi
               fi
             fi
           else
