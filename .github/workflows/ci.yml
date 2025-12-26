@@ -747,6 +747,20 @@ PY
           name: http-client-test-results
           path: packages/http-client/test-artifacts/**
 
+      - name: Comment on PR if http-client tests failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            if (pr) {
+              const body = `⚠️ **packages/http-client** tests failed in CI.\n\n**Artifacts uploaded:** 
+- **http-client-test-results** (contains test-results.json and stdout)\n\n**Run details:** ${runUrl}\n\n**Next steps:** download the artifact and inspect \
+- packages/http-client/test-artifacts/test-results.json (JSON Vitest output)\n- packages/http-client/test-artifacts/test-exitcode\n\nIf you want, re-run the job after pushing a fix or ask for help with failing test details.`;
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+
       - name: Run ops tests
         run: pnpm --filter ops... run test:ops || true
 
