@@ -24,7 +24,7 @@ jobs:
       - name: Setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@10.26.2 --activate
 
       - name: Install dependencies
         run: pnpm install --recursive --silent
@@ -50,7 +50,7 @@ jobs:
       - name: Setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@10.26.2 --activate
 
       - name: Install dependencies
         run: pnpm install --recursive --silent
