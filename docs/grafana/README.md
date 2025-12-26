@@ -3,7 +3,12 @@
 This directory contains a Grafana dashboard JSON template and Prometheus alert rules for Auth-related metrics (revoke/rotate/issue, and rate limiter errors).
 
 Files:
-- `auth-dashboard.json` — Grafana dashboard export; import into Grafana (Dashboard -> Import) and point data source to your Prometheus.
+- `auth-dashboard.json` — Grafana dashboard export; import into Grafana (Dashboards -> Import) and choose a Prometheus data source (or select the `${DS_PROMETHEUS}` variable after import). The dashboard includes template variables:
+  - **${DS_PROMETHEUS}** (datasource)
+  - **${env}** (environment label)
+  - **${service}** (service name)
+  - **${instance}** (instance/host)
+
 - `alerts-auth.rules.yml` — Example Prometheus alerting rules to add to your Prometheus server (or Alertmanager).
 
 Key metrics expected (emitted by `apps/api`):

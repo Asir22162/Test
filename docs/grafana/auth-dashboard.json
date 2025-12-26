@@ -1,7 +1,5 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "gnetId": null,
   "graphTooltip": 0,
@@ -12,54 +10,97 @@
       "type": "timeseries",
       "title": "Auth: Revokes (rate)",
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": "${DS_PROMETHEUS}",
       "targets": [
-        { "expr": "rate(auth_revoke_count[5m])", "legendFormat": "revokes/sec" },
-        { "expr": "rate(auth_revoke_rate_denied[5m])", "legendFormat": "denied/sec" }
+        { "expr": "rate(auth_revoke_count{instance=~\"$instance\",env=~\"$env\",service=~\"$service\"}[5m])", "legendFormat": "revokes/sec" },
+        { "expr": "rate(auth_revoke_rate_denied{instance=~\"$instance\",env=~\"$env\",service=~\"$service\"}[5m])", "legendFormat": "denied/sec" }
       ]
     },
     {
       "type": "timeseries",
       "title": "Auth: Rotations & Issues (rate)",
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": "${DS_PROMETHEUS}",
       "targets": [
-        { "expr": "rate(auth_issue_count[5m])", "legendFormat": "issues/sec" },
-        { "expr": "rate(auth_rotate_count[5m])", "legendFormat": "rotate/sec" },
-        { "expr": "rate(auth_rotate_failures[5m])", "legendFormat": "rotate-failures/sec" }
+        { "expr": "rate(auth_issue_count{env=~\"$env\"}[5m])", "legendFormat": "issues/sec" },
+        { "expr": "rate(auth_rotate_count{env=~\"$env\"}[5m])", "legendFormat": "rotate/sec" },
+        { "expr": "rate(auth_rotate_failures{env=~\"$env\"}[5m])", "legendFormat": "rotate-failures/sec" }
       ]
     },
     {
       "type": "stat",
       "title": "Revoke Denied (5m rate)",
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
-      "targets": [{ "expr": "sum(rate(auth_revoke_rate_denied[5m]))" }]
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_denied{service=~\"$service\"}[5m]))" }]
     },
     {
       "type": "stat",
       "title": "Revoke Allowed (5m rate)",
       "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
-      "targets": [{ "expr": "sum(rate(auth_revoke_rate_allowed[5m]))" }]
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_allowed{service=~\"$service\"}[5m]))" }]
     },
     {
       "type": "stat",
       "title": "Redis Errors (5m)",
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
-      "targets": [{ "expr": "sum(rate(auth_revoke_rate_redis_errors[5m]))" }]
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_redis_errors{service=~\"$service\",env=~\"$env\"}[5m]))" }]
     },
     {
       "type": "timeseries",
-      "title": "Token Bucket Remaining (per-user sample)",
+      "title": "Token Bucket Remaining (example)",
       "gridPos": {"h": 4, "w": 18, "x": 0, "y": 12},
-      "targets": [{ "expr": "auth_tokenbucket_remaining" }]
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "avg(auth_tokenbucket_remaining{service=~\"$service\",instance=~\"$instance\"})" }]
     }
   ],
   "schemaVersion": 36,
   "style": "dark",
   "tags": ["auth","revoke","tokens"],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "label": "Prometheus data source",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" }
+      },
+      {
+        "name": "env",
+        "type": "query",
+        "label": "Environment",
+        "query": "label_values(env)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "label": "Service",
+        "query": "label_values(service)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Instance",
+        "query": "label_values(instance)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      }
+    ]
+  },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Auth - Token & Revoke Metrics",
+  "title": "Auth - Token & Revoke Metrics (templated)",
   "uid": "auth-token-revoke-dashboard",
-  "version": 1
+  "version": 2
 }
