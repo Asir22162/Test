@@ -1,5 +1,8 @@
-import { Controller, Post, Body } from '@nestjs/common'
+import { Controller, Post, Body, UseGuards } from '@nestjs/common'
 import { AuthServiceNest } from './auth.service'
+import { JwtAuthGuard } from './auth.guard'
+import { RevokeOwnershipGuard } from './revoke-ownership.guard'
+import { RevokeRateLimitGuard } from './revoke-rate-limit.guard'
 
 @Controller('auth')
 export class AuthController {
@@ -16,6 +19,7 @@ export class AuthController {
   }
 
   @Post('revoke')
+  @UseGuards(JwtAuthGuard, RevokeOwnershipGuard, RevokeRateLimitGuard)
   async revoke(@Body() body: { refreshToken?: string; jti?: string; reason?: string; revokedBy?: string }) {
     return this.svc.revoke(body)
   }
