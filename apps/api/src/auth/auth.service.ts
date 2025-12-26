@@ -28,4 +28,15 @@ export class AuthServiceNest {
     const auth = this.makeAuth()
     return auth.rotateRefresh(refreshToken)
   }
+
+  async revoke(payload: { refreshToken?: string; jti?: string; reason?: string; revokedBy?: string }) {
+    const auth = this.makeAuth()
+    if (payload.refreshToken) {
+      return auth.revokeByRefreshToken(payload.refreshToken, { revokedBy: payload.revokedBy, reason: payload.reason })
+    }
+    if (payload.jti) {
+      return auth.revokeRefresh(payload.jti, { revokedBy: payload.revokedBy, reason: payload.reason })
+    }
+    throw new Error('Either refreshToken or jti is required')
+  }
 }

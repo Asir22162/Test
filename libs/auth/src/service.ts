@@ -49,7 +49,14 @@ export class AuthService {
     return pair
   }
 
-  async revokeRefresh(jti: string) {
-    await this.refreshStore.revoke(jti)
+  async revokeRefresh(jti: string, opts?: { revokedBy?: string; reason?: string }) {
+    await (this.refreshStore as any).revoke(jti, opts)
+  }
+
+  async revokeByRefreshToken(refreshToken: string, opts?: { revokedBy?: string; reason?: string }) {
+    const payload = await this.jwt.verify(refreshToken)
+    const jti = (payload as any).jti
+    if (!jti) throw new Error('Invalid refresh token: missing jti')
+    await this.revokeRefresh(jti, opts)
   }
 }

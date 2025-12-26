@@ -14,4 +14,9 @@ export class AuthController {
   async refresh(@Body('refreshToken') refreshToken: string) {
     return this.svc.refresh(refreshToken)
   }
+
+  @Post('revoke')
+  async revoke(@Body() body: { refreshToken?: string; jti?: string; reason?: string; revokedBy?: string }) {
+    return this.svc.revoke(body)
+  }
 }
