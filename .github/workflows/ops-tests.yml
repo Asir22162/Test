@@ -25,6 +25,13 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
+
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v || true
+          which pnpm || true
 
       - name: Install dependencies (capture pnpm logs)
         run: |

@@ -53,8 +53,15 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
           pnpm -v || true
+          which pnpm || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: Install
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
@@ -238,8 +245,15 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
           pnpm -v || true
+          which pnpm || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
@@ -336,8 +350,15 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.26.2 --activate
           pnpm -v || true
+          which pnpm || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: Install (capture pnpm logs)
         run: |
           mkdir -p debug
@@ -459,6 +480,12 @@ jobs:
           node-version: '20'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: Install (capture pnpm logs)
         run: |
           mkdir -p debug
@@ -969,6 +996,12 @@ jobs:
           node-version: '20'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
@@ -1229,6 +1262,12 @@ jobs:
           node-version: '22'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
       - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
