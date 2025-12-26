@@ -124,12 +124,12 @@ jobs:
                   summary = '\n\n(Unable to parse detailed test summary)'
                 }
                 body += summary
-                body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```
-" + (content.substring(0, 5000) || '') + "\n```\n</details>"
+                body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```" +
+                  "\n" + (content.substring(0, 5000) || '') + "\n```\n</details>"
               } catch (e) {
                 const content = fs.readFileSync(resultsPath, 'utf8')
-                body += "\n\n<details><summary>Test results (raw)</summary>\n\n```
-" + content.substring(0, 5000) + "\n```\n</details>"
+                body += "\n\n<details><summary>Test results (raw)</summary>\n\n```" +
+                  content.substring(0, 5000) + "\n```\n</details>""
               }
             }
 
@@ -196,8 +196,8 @@ jobs:
                 }
                 if (rows.length > 200) body += `\n*(Only first 200 metrics shown)*\n`
               } else {
-                body += "\n\n**Metrics snapshot:**\n\n```
-" + m.substring(0,5000) + "\n```"
+                body += "\n\n**Metrics snapshot:**\n\n```" +
+                  m.substring(0,5000) + "\n```"
               }
 
               // add a link to the run so reviewers can download artifacts
@@ -240,7 +240,7 @@ jobs:
           pnpm -v || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Debug: environment and registry reachability
+      - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
           (
@@ -267,15 +267,23 @@ jobs:
         with:
           name: debug-info-${{ github.job }}
           path: debug/debug-info.txt
-      - name: Install
+      - name: Install (capture pnpm logs)
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
             echo "pnpm not found; enabling via corepack and preparing pnpm..."
             corepack enable || true
             corepack prepare pnpm@10.26.2 --activate || true
           fi
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
       - name: Build apps/api
         run: pnpm -C apps/api run build || true
       - name: Run migration check (sqlite)
@@ -330,10 +338,18 @@ jobs:
           pnpm -v || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Install
+      - name: Install (capture pnpm logs)
         run: |
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
       - name: Build apps/api
         run: pnpm -C apps/api run build
       - name: Install mysql client
@@ -443,10 +459,18 @@ jobs:
           node-version: '20'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Install
+      - name: Install (capture pnpm logs)
         run: |
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
       - name: Build apps/api
         run: pnpm -C apps/api run build
       - name: Install mysql client
@@ -580,14 +604,7 @@ jobs:
           # find all JSON dashboards (recursive)
           while IFS= read -r -d '' file; do
             echo "Checking dashboard file: $file"
-            read uid title < <(python3 - <<'PY' "$file"
-import json,sys
-j=json.load(open(sys.argv[1]))
-uid=j.get('uid') or ''
-title=j.get('title') or ''
-print(uid + '\t' + title)
-PY
-)
+            read uid title < <(python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); print((j.get("uid") or "") + "\t" + (j.get("title") or ""))' "$file")
             uid=$(echo "$uid" | tr -d '\r')
             title=$(echo "$title" | tr -d '\r')
 
@@ -610,19 +627,7 @@ PY
                 echo "Searching for dashboard by title: $title"
                 title_enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$title")
                 results=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/search?query=$title_enc&type=dash-db" || true)
-                found=$(python3 - <<'PY' "$title" "$results"
-import sys,json
-q=sys.argv[1]
-try:
-    items=json.loads(sys.argv[2])
-except Exception:
-    items=[]
-for it in items:
-    if it.get('title')==q:
-        print('1'); sys.exit(0)
-print('0')
-PY
-)
+                found=$(python3 -c 'import sys,json;q=sys.argv[1];items=json.loads(sys.argv[2]) if sys.argv[2] else [];print("1" if any(it.get("title")==q for it in items) else "0")' "$title" "$results")
                 if [ "$found" != "1" ]; then
                   echo "::error ::Dashboard with title '$title' (file: $file) not found"
                   cp "$file" "$failed_dir/"
@@ -654,27 +659,27 @@ PY
         if: always()
         run: |
           python3 - <<'PY'
-import json, os
-summary = ''
-if os.path.exists('grafana-provisioning/summary.txt'):
-    summary = open('grafana-provisioning/summary.txt','r', encoding='utf8').read()
-# get grafana logs tail
-try:
-    glogs = os.popen('docker logs ci-grafana --tail 200 2>/dev/null').read()
-except Exception:
-    glogs = ''
-failed_dashboards = []
-if os.path.isdir('grafana-dashboards-failed'):
-    failed_dashboards = [f for f in os.listdir('grafana-dashboards-failed')]
-obj = {
-    'summary_text': summary[:5000],
-    'errors': summary.splitlines()[-50:],
-    'failed_dashboards': failed_dashboards,
-    'grafana_logs_tail': glogs[-8000:]
-}
-open('grafana-provisioning/summary.json','w', encoding='utf8').write(json.dumps(obj))
-print('wrote grafana-provisioning/summary.json')
-PY
+          import json, os
+          summary = ''
+          if os.path.exists('grafana-provisioning/summary.txt'):
+              summary = open('grafana-provisioning/summary.txt','r', encoding='utf8').read()
+          # get grafana logs tail
+          try:
+              glogs = os.popen('docker logs ci-grafana --tail 200 2>/dev/null').read()
+          except Exception:
+              glogs = ''
+          failed_dashboards = []
+          if os.path.isdir('grafana-dashboards-failed'):
+              failed_dashboards = [f for f in os.listdir('grafana-dashboards-failed')]
+          obj = {
+              'summary_text': summary[:5000],
+              'errors': summary.splitlines()[-50:],
+              'failed_dashboards': failed_dashboards,
+              'grafana_logs_tail': glogs[-8000:]
+          }
+          open('grafana-provisioning/summary.json','w', encoding='utf8').write(json.dumps(obj))
+          print('wrote grafana-provisioning/summary.json')
+          PY
 
       - name: Upload provisioning snapshot artifact
         if: failure()
@@ -721,30 +726,30 @@ PY
           fi
           echo "Parsing datasource entries (name,type,url,access) from $DS_FILE"
           entries=$(python3 - <<'PY'
-import sys
-p=sys.argv[1]
-entries=[]
-with open(p) as f:
-    cur=None
-    for ln in f:
-        s=ln.rstrip('\n')
-        if s.strip().startswith('- name:') or s.strip().startswith('name:'):
-            if cur:
-                entries.append(cur)
-            name=s.split(':',1)[1].strip().strip('"')
-            cur={'name':name,'type':'','url':'','access':''}
-        elif s.strip().startswith('type:') and cur is not None:
-            cur['type']=s.split(':',1)[1].strip().strip('"')
-        elif s.strip().startswith('url:') and cur is not None:
-            cur['url']=s.split(':',1)[1].strip().strip('"')
-        elif s.strip().startswith('access:') and cur is not None:
-            cur['access']=s.split(':',1)[1].strip().strip('"')
-    if cur:
-        entries.append(cur)
-for e in entries:
-    print('\t'.join([e['name'], e['type'], e['url'], e['access']]))
-PY
-"$DS_FILE")
+          import sys
+          p=sys.argv[1]
+          entries=[]
+          with open(p) as f:
+              cur=None
+              for ln in f:
+                  s=ln.rstrip('\n')
+                  if s.strip().startswith('- name:') or s.strip().startswith('name:'):
+                      if cur:
+                          entries.append(cur)
+                      name=s.split(':',1)[1].strip().strip('"')
+                      cur={'name':name,'type':'','url':'','access':''}
+          elif s.strip().startswith('type:') and cur is not None:
+              cur['type']=s.split(':',1)[1].strip().strip('"')
+          elif s.strip().startswith('url:') and cur is not None:
+              cur['url']=s.split(':',1)[1].strip().strip('"')
+          elif s.strip().startswith('access:') and cur is not None:
+              cur['access']=s.split(':',1)[1].strip().strip('"')
+          if cur:
+              entries.append(cur)
+          for e in entries:
+              print('\t'.join([e['name'], e['type'], e['url'], e['access']]))
+          PY
+          "$DS_FILE")
           if [ -z "$entries" ]; then echo "::error ::No datasource entries found in $DS_FILE"; exit 1; fi
           echo "$entries" | while IFS=$'\t' read -r name typ url access; do
             name=$(echo "$name" | tr -d '"')
@@ -759,11 +764,11 @@ PY
               if [ "$ds_status" = "200" ]; then
                 ds_json=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/name/$name_enc")
                 actual_type=$(python3 - <<'PY'
-import sys, json
-j=json.load(sys.stdin)
-print((j.get('type') or '').lower())
-PY
- <<<'$ds_json')
+                import sys, json
+                j=json.load(sys.stdin)
+                print((j.get('type') or '').lower())
+                PY
+                 <<<'$ds_json')
                 if [ -n "$typ" ] && [ "$typ" != "$actual_type" ]; then
                   echo "::error ::Datasource $name has type '${actual_type}', expected '${typ}'"
                   echo "Datasource JSON: $ds_json"
@@ -772,11 +777,11 @@ PY
                   exit 1
                 fi
                 actual_url=$(python3 - <<'PY'
-import sys,json
-j=json.load(sys.stdin)
-print(j.get('url') or '')
-PY
- <<<'$ds_json')
+                import sys,json
+                j=json.load(sys.stdin)
+                print(j.get('url') or '')
+                PY
+                 <<<'$ds_json')
                 if [ -n "$url" ]; then
                   # normalize (strip trailing slash)
                   norm_expected=$(echo "$url" | sed 's:/*$::')
@@ -790,11 +795,11 @@ PY
                   fi
                 fi
                 actual_access=$(python3 - <<'PY'
-import sys,json
-j=json.load(sys.stdin)
-print((j.get('access') or '').lower())
-PY
- <<<'$ds_json')
+                import sys,json
+                j=json.load(sys.stdin)
+                print((j.get('access') or '').lower())
+                PY
+                 <<<'$ds_json')
                 if [ -n "$access" ] && [ "$access" != "$actual_access" ]; then
                   echo "::error ::Datasource $name access mismatch: actual='$actual_access' expected='$access'"
                   echo "Datasource JSON: $ds_json"
@@ -867,18 +872,18 @@ PY
           docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 > grafana-demo/pushgateway.log || true
           docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 > grafana-demo/grafana.log || true
           python3 - <<'PY'
-import json,os
-q=''
-if os.path.exists('grafana-demo/prom_query.json'):
-    q=open('grafana-demo/prom_query.json').read()
-prom_lines = ''
-if os.path.exists('grafana-demo/prometheus.log'):
-    prom_lines=open('grafana-demo/prometheus.log').read()[-5000:]
-obj={'prom_query': json.loads(q) if q else {}, 'prometheus_log_tail': prom_lines}
-open('grafana-demo/summary.json','w', encoding='utf8').write(json.dumps(obj))
-open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:5000])
-print('wrote grafana-demo summary')
-PY
+          import json,os
+          q=''
+          if os.path.exists('grafana-demo/prom_query.json'):
+              q=open('grafana-demo/prom_query.json').read()
+          prom_lines = ''
+          if os.path.exists('grafana-demo/prometheus.log'):
+              prom_lines=open('grafana-demo/prometheus.log').read()[-5000:]
+          obj={'prom_query': json.loads(q) if q else {}, 'prometheus_log_tail': prom_lines}
+          open('grafana-demo/summary.json','w', encoding='utf8').write(json.dumps(obj))
+          open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:5000])
+          print('wrote grafana-demo summary')
+          PY
 
       - name: Wait for Prometheus to scrape sample metric
         run: |
@@ -886,15 +891,15 @@ PY
             resp=$(curl -sS "http://127.0.0.1:9090/api/v1/query?query=auth_revoke_count" || true)
             if [ -n "$resp" ]; then
               count=$(python3 - <<'PY' "$resp"
-import sys, json
-try:
-    j=json.loads(sys.argv[1])
-except Exception:
-    j={}
-res=j.get('data',{}).get('result',[])
-print(len(res))
-PY
-)
+              import sys, json
+              try:
+                  j=json.loads(sys.argv[1])
+              except Exception:
+                  j={}
+              res=j.get('data',{}).get('result',[])
+              print(len(res))
+              PY
+              )
               if [ "$count" -gt 0 ]; then
                 echo "Prometheus scraped metric auth_revoke_count ($count samples)"
                 exit 0
@@ -964,7 +969,7 @@ PY
           node-version: '20'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Debug: environment and registry reachability
+      - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
           (
@@ -991,15 +996,23 @@ PY
         with:
           name: debug-info-${{ github.job }}
           path: debug/debug-info.txt
-      - name: Install
+      - name: Install (capture pnpm logs)
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
             echo "pnpm not found; enabling via corepack and preparing pnpm..."
             corepack enable || true
             corepack prepare pnpm@10.26.2 --activate || true
           fi
-          pnpm install --no-frozen-lockfile
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
           pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
       - name: Setup Java (check baseline)
         uses: actions/setup-java@v4
         with:
@@ -1041,10 +1054,18 @@ PY
             const pr = github.context.payload.pull_request
             const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
             if (pr) {
-              const body = `⚠️ **packages/http-client** tests failed in CI.\n\n**Artifacts uploaded:** 
-- **http-client-test-results** (contains test-results.json and stdout)\n\n**Run details:** ${runUrl}\n\n**Next steps:** download the artifact and inspect \
-- packages/http-client/test-artifacts/test-results.json (JSON Vitest output)\n- packages/http-client/test-artifacts/test-exitcode\n\nIf you want, re-run the job after pushing a fix or ask for help with failing test details.`;
-              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+              const body = `⚠️ **packages/http-client** tests failed in CI.
+
+              **Artifacts uploaded:** **http-client-test-results** (contains test-results.json and stdout)
+
+              **Run details:** ${runUrl}
+
+              **Next steps:** download the artifact and inspect:
+              - packages/http-client/test-artifacts/test-results.json (JSON Vitest output)
+              - packages/http-client/test-artifacts/test-exitcode
+
+              If you want, re-run the job after pushing a fix or ask for help with failing test details.`;
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body });
             }
 
       - name: Run ops tests
@@ -1208,7 +1229,7 @@ PY
           node-version: '22'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-      - name: Debug: environment and registry reachability
+      - name: "Debug: environment and registry reachability"
         run: |
           mkdir -p debug
           (
@@ -1244,6 +1265,7 @@ PY
           fi
           pnpm install --no-frozen-lockfile
           pnpm -v || true
+      - name: Lint
         run: pnpm -w -r run lint
       - name: Test (Node 22)
         # allow failures here so Node 22 remains a non-blocking compatibility check
