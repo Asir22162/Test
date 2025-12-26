@@ -340,6 +340,366 @@ jobs:
           name: api-e2e-results
           path: apps/api/test-artifacts/**
 
+  smoke-grafana-provisioning:
+    name: Smoke — Grafana provisioning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for changes affecting grafana
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            grafana:
+              - 'docs/grafana/**'
+      - name: Start Grafana container
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          # start grafana with provisioning and dashboards mounted
+          docker run -d --name ci-grafana \
+            -e GF_SECURITY_ADMIN_PASSWORD=admin \
+            -v $GITHUB_WORKSPACE/docs/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro \
+            -v $GITHUB_WORKSPACE/docs/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro \
+            -v $GITHUB_WORKSPACE/docs/grafana/dashboards:/var/lib/grafana/dashboards/auth:ro \
+            -p 3000:3000 \
+            grafana/grafana:latest || true
+          # wait for health endpoint
+          for i in $(seq 1 60); do
+            if curl -sS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Grafana is up"
+              break
+            fi
+            sleep 1
+          done
+      - name: Check dashboard UID exists
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Checking Grafana for dashboard UID: auth-token-revoke-dashboard"
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin http://127.0.0.1:3000/api/dashboards/uid/auth-token-revoke-dashboard || true)
+            echo "status=$status"
+            if [ "$status" = "200" ]; then
+              echo "DASHBOARD_FOUND=1" >> $GITHUB_ENV
+              echo "Grafana provisioning OK — dashboard found"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error ::Dashboard UID auth-token-revoke-dashboard not found"
+          echo "Grafana logs (tail 200):"
+          docker logs ci-grafana --tail 200 || true
+          exit 1
+
+      - name: Validate dashboards from provisioning
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -e
+          DASH_DIR="$GITHUB_WORKSPACE/docs/grafana/dashboards"
+          if [ ! -d "$DASH_DIR" ]; then
+            echo "No dashboards directory found at $DASH_DIR; skipping dashboard validation"
+            exit 0
+          fi
+
+          failed_dir="grafana-dashboards-failed"
+          rm -rf "$failed_dir" || true
+          mkdir -p "$failed_dir"
+          missing=0
+
+          # find all JSON dashboards (recursive)
+          while IFS= read -r -d '' file; do
+            echo "Checking dashboard file: $file"
+            read uid title < <(python3 - <<'PY' "$file"
+import json,sys
+j=json.load(open(sys.argv[1]))
+uid=j.get('uid') or ''
+title=j.get('title') or ''
+print(uid + '\t' + title)
+PY
+)
+            uid=$(echo "$uid" | tr -d '\r')
+            title=$(echo "$title" | tr -d '\r')
+
+            if [ -n "$uid" ]; then
+              echo "Validating by uid: $uid"
+              status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin "http://127.0.0.1:3000/api/dashboards/uid/$uid" || true)
+              echo "status=$status"
+              if [ "$status" != "200" ]; then
+                echo "::error ::Dashboard with uid $uid (file: $file) not found"
+                cp "$file" "$failed_dir/"
+                missing=1
+              fi
+            else
+              # fallback to search by title
+              if [ -z "$title" ]; then
+                echo "::error ::Dashboard file $file has no uid or title"
+                cp "$file" "$failed_dir/"
+                missing=1
+              else
+                echo "Searching for dashboard by title: $title"
+                title_enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$title")
+                results=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/search?query=$title_enc&type=dash-db" || true)
+                found=$(python3 - <<'PY' "$title" "$results"
+import sys,json
+q=sys.argv[1]
+try:
+    items=json.loads(sys.argv[2])
+except Exception:
+    items=[]
+for it in items:
+    if it.get('title')==q:
+        print('1'); sys.exit(0)
+print('0')
+PY
+)
+                if [ "$found" != "1" ]; then
+                  echo "::error ::Dashboard with title '$title' (file: $file) not found"
+                  cp "$file" "$failed_dir/"
+                  missing=1
+                fi
+              fi
+            fi
+          done < <(find "$DASH_DIR" -type f -name '*.json' -print0)
+
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more dashboards not provisioned. See $failed_dir for JSON files"
+            tar -czf "$failed_dir.tar.gz" -C "$failed_dir" . || true
+            ls -la "$failed_dir" || true
+            docker logs ci-grafana --tail 200 || true
+            exit 1
+          fi
+          echo "All dashboards from provisioning validated."
+
+      - name: Upload failed dashboards artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-failed-dashboards
+          path: grafana-dashboards-failed.tar.gz
+
+      - name: Upload provisioning snapshot artifact
+        if: failure()
+        run: |
+          mkdir -p grafana-provisioning || true
+          tar -czf grafana-provisioning/provisioning-and-dashboards.tar.gz docs/grafana/provisioning docs/grafana/dashboards || true
+        # upload artifact
+      - name: Upload provisioning snapshot artifact (upload)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-provisioning
+          path: grafana-provisioning/**
+
+      - name: Comment on PR if provisioning failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            if (pr) {
+              const body = `⚠️ Grafana provisioning smoke check failed.\n\nArtifacts uploaded: **grafana-provisioning**, **grafana-provisioning-logs**, **grafana-failed-dashboards**.\n\nRun details: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+
+      - name: Check datasources from provisioning
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          DS_FILE="$GITHUB_WORKSPACE/docs/grafana/provisioning/datasources/datasources.yml"
+          if [ ! -f "$DS_FILE" ]; then
+            echo "::error ::Datasources file $DS_FILE not found"
+            exit 1
+          fi
+          echo "Parsing datasource entries (name,type,url,access) from $DS_FILE"
+          entries=$(python3 - <<'PY'
+import sys
+p=sys.argv[1]
+entries=[]
+with open(p) as f:
+    cur=None
+    for ln in f:
+        s=ln.rstrip('\n')
+        if s.strip().startswith('- name:') or s.strip().startswith('name:'):
+            if cur:
+                entries.append(cur)
+            name=s.split(':',1)[1].strip().strip('"')
+            cur={'name':name,'type':'','url':'','access':''}
+        elif s.strip().startswith('type:') and cur is not None:
+            cur['type']=s.split(':',1)[1].strip().strip('"')
+        elif s.strip().startswith('url:') and cur is not None:
+            cur['url']=s.split(':',1)[1].strip().strip('"')
+        elif s.strip().startswith('access:') and cur is not None:
+            cur['access']=s.split(':',1)[1].strip().strip('"')
+    if cur:
+        entries.append(cur)
+for e in entries:
+    print('\t'.join([e['name'], e['type'], e['url'], e['access']]))
+PY
+"$DS_FILE")
+          if [ -z "$entries" ]; then echo "::error ::No datasource entries found in $DS_FILE"; exit 1; fi
+          echo "$entries" | while IFS=$'\t' read -r name typ url access; do
+            name=$(echo "$name" | tr -d '"')
+            typ=$(echo "$typ" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+            url=$(echo "$url" | tr -d '"')
+            access=$(echo "$access" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+            echo "Checking datasource: $name (expected type: ${typ:-<none>}, url: ${url:-<none>}, access: ${access:-<none>})"
+            name_enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$name")
+            for i in $(seq 1 30); do
+              ds_status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin "http://127.0.0.1:3000/api/datasources/name/$name_enc" || true)
+              echo "ds_status=$ds_status (name=$name)"
+              if [ "$ds_status" = "200" ]; then
+                ds_json=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/name/$name_enc")
+                actual_type=$(python3 - <<'PY'
+import sys, json
+j=json.load(sys.stdin)
+print((j.get('type') or '').lower())
+PY
+ <<<'$ds_json')
+                if [ -n "$typ" ] && [ "$typ" != "$actual_type" ]; then
+                  echo "::error ::Datasource $name has type '${actual_type}', expected '${typ}'"
+                  echo "Datasource JSON: $ds_json"
+                  docker logs ci-grafana --tail 200 || true
+                  exit 1
+                fi
+                actual_url=$(python3 - <<'PY'
+import sys,json
+j=json.load(sys.stdin)
+print(j.get('url') or '')
+PY
+ <<<'$ds_json')
+                if [ -n "$url" ]; then
+                  # normalize (strip trailing slash)
+                  norm_expected=$(echo "$url" | sed 's:/*$::')
+                  norm_actual=$(echo "$actual_url" | sed 's:/*$::')
+                  if [ "$norm_expected" != "$norm_actual" ]; then
+                    echo "::error ::Datasource $name url mismatch: actual='$actual_url' expected='$url'"
+                    echo "Datasource JSON: $ds_json"
+                    docker logs ci-grafana --tail 200 || true
+                    exit 1
+                  fi
+                fi
+                actual_access=$(python3 - <<'PY'
+import sys,json
+j=json.load(sys.stdin)
+print((j.get('access') or '').lower())
+PY
+ <<<'$ds_json')
+                if [ -n "$access" ] && [ "$access" != "$actual_access" ]; then
+                  echo "::error ::Datasource $name access mismatch: actual='$actual_access' expected='$access'"
+                  echo "Datasource JSON: $ds_json"
+                  docker logs ci-grafana --tail 200 || true
+                  exit 1
+                fi
+                keyName=$(echo "$name" | sed 's/[^A-Za-z0-9_]/_/g')
+                echo "DATASOURCE_${keyName}_FOUND=1" >> $GITHUB_ENV
+                echo "Found datasource $name and type/url/access validated: type=${actual_type:-<none>} url=${actual_url:-<none>} access=${actual_access:-<none>}"
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ds_status" != "200" ]; then
+              echo "::error ::Datasource $name not found"
+              docker logs ci-grafana --tail 200 || true
+              exit 1
+            fi
+          done
+          echo "All datasources from provisioning found and types/urls/access validated."
+      - name: Upload grafana logs
+        if: always()
+        run: |
+          mkdir -p grafana-logs
+          docker logs ci-grafana --tail 200 > grafana-logs/ci-grafana.log || true
+      - name: Upload logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-provisioning-logs
+          path: grafana-logs/**
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f ci-grafana || true
+
+  smoke-grafana-demo:
+    name: Smoke — Grafana demo (compose + metrics)
+    runs-on: ubuntu-latest
+    needs: [smoke-grafana-provisioning]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Start demo compose
+        run: |
+          docker compose -f docs/grafana/demo-docker-compose.yml up -d
+          for i in $(seq 1 60); do
+            if curl -sS http://127.0.0.1:9090/-/ready >/dev/null 2>&1 && curl -sS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Services ready"
+              break
+            fi
+            sleep 2
+          done
+      - name: Push sample metrics
+        run: |
+          node docs/grafana/push-sample-metrics.js
+      - name: Wait for Prometheus to scrape sample metric
+        run: |
+          for i in $(seq 1 30); do
+            resp=$(curl -sS "http://127.0.0.1:9090/api/v1/query?query=auth_revoke_count" || true)
+            if [ -n "$resp" ]; then
+              count=$(python3 - <<'PY' "$resp"
+import sys, json
+try:
+    j=json.loads(sys.argv[1])
+except Exception:
+    j={}
+res=j.get('data',{}).get('result',[])
+print(len(res))
+PY
+)
+              if [ "$count" -gt 0 ]; then
+                echo "Prometheus scraped metric auth_revoke_count ($count samples)"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "::error ::Prometheus did not show 'auth_revoke_count' metric after push"
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 || true
+          exit 1
+      - name: Upload demo logs on failure
+        if: failure()
+        run: |
+          mkdir -p grafana-demo-logs || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 > grafana-demo-logs/grafana.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 > grafana-demo-logs/prometheus.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 > grafana-demo-logs/pushgateway.log || true
+      - name: Upload demo logs artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-demo-logs
+          path: grafana-demo-logs/**
+
+      - name: Comment on PR if grafana demo failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            if (pr) {
+              const body = `⚠️ Grafana demo smoke check failed.\n\nArtifact uploaded: **grafana-demo-logs**.\n\nRun details: ${runUrl}\n\nPlease download the artifact from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f docs/grafana/demo-docker-compose.yml down || true
+
   build:
     needs: [smoke-logging, smoke-api, smoke-api-mysql, smoke-api-e2e]
     runs-on: ubuntu-latest
@@ -365,6 +725,24 @@ jobs:
         run: pnpm -w -r run lint
       - name: Test
         run: pnpm -w -r run test
+
+      - name: Run http-client tests (capture JSON results)
+        shell: bash
+        continue-on-error: true
+        run: |
+          mkdir -p packages/http-client/test-artifacts
+          pnpm -C packages/http-client test -- --reporter json > packages/http-client/test-artifacts/test-results.json 2>&1 || true
+          echo "$?" > packages/http-client/test-artifacts/test-exitcode
+          if [ "$(cat packages/http-client/test-artifacts/test-exitcode)" -ne 0 ]; then
+            echo "HTTP_CLIENT_TESTS_FAILED=1" >> $GITHUB_ENV
+          fi
+
+      - name: Upload http-client test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: http-client-test-results
+          path: packages/http-client/test-artifacts/**
 
       - name: Run ops tests
         run: pnpm --filter ops... run test:ops || true
