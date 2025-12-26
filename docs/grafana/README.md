@@ -41,3 +41,13 @@ How to import dashboard:
 Notes:
 - Tune alert thresholds to your traffic.
 - Consider scoping dashboards by instance or service tags when running multiple services.
+
+Demo: run Prometheus + Pushgateway + Grafana locally
+1. Start services: `docker compose -f docs/grafana/demo-docker-compose.yml up -d`
+2. Push sample metrics: `node docs/grafana/push-sample-metrics.js`
+3. Open Prometheus: http://localhost:9090 and Grafana: http://localhost:3000 (admin/admin)
+4. Import `docs/grafana/auth-dashboard.json` into Grafana and set the Prometheus data source to `http://host.docker.internal:9090` (on Mac/Windows) or `http://localhost:9090` if running natively.
+
+Tips:
+- The demo script pushes grouped metrics with labels (service, env, team, user, instance) so the dashboard panels (Top N, team aggregation) will show example data immediately.
+- You can re-run the push script to update metrics. To simulate time-series increases, modify the counters or push different values over time.
