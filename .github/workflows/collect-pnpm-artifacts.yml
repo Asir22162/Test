@@ -71,7 +71,11 @@ jobs:
                   echo "--- pnpm-install file: $f ---" >> summary/pnpm-summary.txt
                   # extract first N lines containing ERR_INVALID_THIS and their surrounding context
                   echo "First occurrences of ERR_INVALID_THIS (with context):" >> summary/pnpm-summary.txt
-                  grep -n -C2 "ERR_INVALID_THIS" "$f" | sed -n '1,200p' >> summary/pnpm-summary.txt || true
+                  if grep -n -C2 "ERR_INVALID_THIS" "$f" | sed -n '1,200p' >> summary/pnpm-summary.txt; then
+                    # record marker for later steps to act upon
+                    echo "ERR_INVALID_THIS detected in $f" >> summary/pnpm-summary.txt
+                    touch summary/invalid-this-found
+                  fi
 
                   echo ""
                   echo "Top 10 request-retry error lines (code ERR_INVALID_THIS):" >> summary/pnpm-summary.txt
@@ -87,6 +91,20 @@ jobs:
 
           # Make a machine-parsable JSON summary
           jq -n --arg run "$RUN_ID" '{run: $run, summary: (input // "no summary")}' > summary/placeholder.json || true
+
+      - name: Create internal issue if ERR_INVALID_THIS found
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs')
+            const runId = process.env.RUN_ID
+            if (!fs.existsSync('summary/invalid-this-found')) {
+              core.info('No ERR_INVALID_THIS found; skipping issue creation.')
+              return
+            }
+            const body = fs.readFileSync('summary/pnpm-summary.txt','utf8')
+            await github.rest.issues.create({ owner: github.context.repo.owner, repo: github.context.repo.repo, title: `Automated: pnpm ERR_INVALID_THIS in workflow run ${runId}`, body })
 
       - name: Upload parsed summary artifact
         uses: actions/upload-artifact@v4
@@ -104,6 +122,6 @@ jobs:
             const pr = github.context.payload.workflow_run.pull_requests && github.context.payload.workflow_run.pull_requests[0]
             if (!pr) return
             const summary = fs.readFileSync('summary/pnpm-summary.txt','utf8')
-            const body = `Automated pnpm artifact summary for workflow run #${{ github.event.workflow_run.id }}:\n\n` + '```
-' + summary.substring(0, 6000) + '\n```'
+            const runId = github.context.payload.workflow_run && github.context.payload.workflow_run.id
+            const body = 'Automated pnpm artifact summary for workflow run #' + runId + "\n\n```\n" + summary.substring(0, 6000) + "\n```"
             await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })

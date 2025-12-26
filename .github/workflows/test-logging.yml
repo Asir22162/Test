@@ -101,6 +101,23 @@ jobs:
         run: |
           pnpm -v
           which pnpm
+      - name: Enforce pnpm version
+        run: |
+          if [ "${FORCE_PNPM_INSTALL:-false}" = "true" ]; then
+            echo "FORCE_PNPM_INSTALL=true: installing pnpm@10.26.2"
+            npm install -g pnpm@10.26.2
+          else
+            pnpm -v | grep -q '^10\.26\.2$' || (echo 'pnpm version mismatch' && exit 1)
+          fi
+      - name: Enforce pnpm version
+        run: |
+          # If FORCE_PNPM_INSTALL=true the runner will install pnpm@10.26.2 globally; otherwise fail on mismatch
+          if [ "${FORCE_PNPM_INSTALL:-false}" = "true" ]; then
+            echo "FORCE_PNPM_INSTALL=true: installing pnpm@10.26.2"
+            npm install -g pnpm@10.26.2
+          else
+            pnpm -v | grep -q '^10\.26\.2$' || (echo 'pnpm version mismatch' && exit 1)
+          fi
       - name: Install dependencies (capture pnpm logs)
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then

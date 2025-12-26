@@ -33,6 +33,15 @@ jobs:
           pnpm -v || true
           which pnpm || true
 
+      - name: Enforce pnpm version
+        run: |
+          if [ "${FORCE_PNPM_INSTALL:-false}" = "true" ]; then
+            echo "FORCE_PNPM_INSTALL=true: installing pnpm@10.26.2"
+            npm install -g pnpm@10.26.2
+          else
+            pnpm -v | grep -q '^10\.26\.2$' || (echo 'pnpm version mismatch' && exit 1)
+          fi
+
       - name: Install dependencies (capture pnpm logs)
         run: |
           mkdir -p debug
