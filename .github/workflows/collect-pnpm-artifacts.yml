@@ -106,6 +106,94 @@ jobs:
             const body = fs.readFileSync('summary/pnpm-summary.txt','utf8')
             await github.rest.issues.create({ owner: github.context.repo.owner, repo: github.context.repo.repo, title: `Automated: pnpm ERR_INVALID_THIS in workflow run ${runId}`, body })
 
+      - name: Update stability counter and create restore PR if threshold met
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          DEFAULT_BRANCH: ${{ github.event.workflow_run.head_branch || github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # If we found an invalid-this marker, reset counter and exit
+          if [ -f summary/invalid-this-found ]; then
+            echo "Invalid-this found; resetting stable counter"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            echo 0 > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt || true
+            git commit -m "ci(automation): reset pnpm stable counter due to ERR_INVALID_THIS" || true
+            git push --set-upstream origin $branch || true
+            exit 0
+          fi
+
+          # Determine if current summary shows pnpm 10.26.2
+          if grep -q "10\.26\.2" summary/pnpm-summary.txt; then
+            echo "Current run shows pnpm@10.26.2; incrementing stability counter"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            if [ -f pnpm-stable-count.txt ]; then
+              count=$(cat pnpm-stable-count.txt)
+            else
+              count=0
+            fi
+            count=$((count + 1))
+            echo $count > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt
+            git commit -m "ci(automation): update pnpm stable counter to $count" || true
+            git push --set-upstream origin $branch || true
+
+            if [ "$count" -ge 2 ]; then
+              echo "Stability threshold reached (count=$count); creating restore PR"
+              pr_branch=automations/restore-frozen-lockfile-${RUN_ID}
+              git fetch origin $DEFAULT_BRANCH
+              git checkout -b $pr_branch origin/$DEFAULT_BRANCH || git checkout -b $pr_branch
+
+              # Replace --no-frozen-lockfile with --frozen-lockfile in workflows
+              sed -i "s/--no-frozen-lockfile/--frozen-lockfile/g" .github/workflows/*.yml || true
+
+              if git diff --quiet; then
+                echo "No workflow changes needed; skipping PR creation"
+              else
+                git add .github/workflows/*.yml
+                git commit -m "ci: restore --frozen-lockfile after pnpm stability verified" || true
+                git push --set-upstream origin $pr_branch
+
+                # Create draft PR
+                body=$(printf "Automated PR to restore --frozen-lockfile after pnpm was stable in %d consecutive runs. See collector summary for run %s.\n\nSummary:\n\n$(sed -n '1,800p' ../summary/pnpm-summary.txt)" "$count" "$RUN_ID")
+                curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"title\": \"chore: restore --frozen-lockfile\", \"head\": \"${pr_branch}\", \"base\": \"${DEFAULT_BRANCH}\", \"body\": \"${body//\"/\\\"}\", \"draft\": true}" "https://api.github.com/repos/${REPO}/pulls" || true
+              fi
+            fi
+          else
+            echo "pnpm version not 10.26.2 in summary; not incrementing"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            echo 0 > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt || true
+            git commit -m "ci(automation): reset pnpm stable counter due to version mismatch" || true
+            git push --set-upstream origin $branch || true
+          fi
+
       - name: Upload parsed summary artifact
         uses: actions/upload-artifact@v4
         with:
