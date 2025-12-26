@@ -204,6 +204,24 @@ jobs:
           pnpm -v || true
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+      - name: Debug: environment and registry reachability
+        run: |
+          echo '--- Debug: Node & pnpm ---'
+          node -v || true
+          pnpm -v || true
+          echo '--- Corepack ---'
+          corepack --version || true
+          corepack enable || true
+          corepack prepare pnpm@10.26.2 --activate || true
+          echo '--- npm registry ---'
+          npm config get registry || true
+          echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+          echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+          env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+          echo '--- Curl registry headers ---'
+          curl -sS -I https://registry.npmjs.org/vue || true
+          echo '--- Curl registry fetch ---'
+          curl -sS https://registry.npmjs.org/vue -o /dev/null || true
       - name: Install
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
@@ -901,6 +919,24 @@ PY
           node-version: '20'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+      - name: Debug: environment and registry reachability
+        run: |
+          echo '--- Debug: Node & pnpm ---'
+          node -v || true
+          pnpm -v || true
+          echo '--- Corepack ---'
+          corepack --version || true
+          corepack enable || true
+          corepack prepare pnpm@10.26.2 --activate || true
+          echo '--- npm registry ---'
+          npm config get registry || true
+          echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+          echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+          env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+          echo '--- Curl registry headers ---'
+          curl -sS -I https://registry.npmjs.org/vue || true
+          echo '--- Curl registry fetch ---'
+          curl -sS https://registry.npmjs.org/vue -o /dev/null || true
       - name: Install
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
@@ -910,8 +946,6 @@ PY
           fi
           pnpm install --no-frozen-lockfile
           pnpm -v || true
-      - name: Setup Java (check baseline)
-        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -1118,6 +1152,24 @@ PY
           node-version: '22'
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
+      - name: Debug: environment and registry reachability
+        run: |
+          echo '--- Debug: Node & pnpm ---'
+          node -v || true
+          pnpm -v || true
+          echo '--- Corepack ---'
+          corepack --version || true
+          corepack enable || true
+          corepack prepare pnpm@10.26.2 --activate || true
+          echo '--- npm registry ---'
+          npm config get registry || true
+          echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+          echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+          env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+          echo '--- Curl registry headers ---'
+          curl -sS -I https://registry.npmjs.org/vue || true
+          echo '--- Curl registry fetch ---'
+          curl -sS https://registry.npmjs.org/vue -o /dev/null || true
       - name: Install
         run: |
           if ! command -v pnpm >/dev/null 2>&1; then
@@ -1127,7 +1179,6 @@ PY
           fi
           pnpm install --no-frozen-lockfile
           pnpm -v || true
-      - name: Lint
         run: pnpm -w -r run lint
       - name: Test (Node 22)
         # allow failures here so Node 22 remains a non-blocking compatibility check
