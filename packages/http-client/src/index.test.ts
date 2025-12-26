@@ -55,4 +55,47 @@ describe('HttpClient', () => {
     expect(onError).toHaveBeenCalled()
     expect(scope.isDone()).toBe(true)
   })
+
+  it('retries on 429 and succeeds', async () => {
+    const scope = nock('http://api.test')
+      .get('/too-many')
+      .reply(429, 'slow')
+      .get('/too-many')
+      .reply(200, { ok: true })
+
+    const onRetry = vi.fn()
+    const client = new HttpClient({ baseUrl: 'http://api.test', retry: { retries: 2, baseDelayMs: 1, jitterMs: 0 }, metrics: { onRetry } })
+    const res = await client.get('/too-many')
+    expect(res).toEqual({ ok: true })
+    expect(onRetry).toHaveBeenCalled()
+    expect(scope.isDone()).toBe(true)
+  })
+
+  it('throws HttpError with status and body', async () => {
+    const scope = nock('http://api.test')
+      .get('/bad')
+      .reply(400, 'invalid')
+
+    const client = new HttpClient({ baseUrl: 'http://api.test' })
+    await expect(client.get('/bad')).rejects.toMatchObject({ status: 400, body: 'invalid' })
+    expect(scope.isDone()).toBe(true)
+  })
+
+  it('invokes circuit hooks on success and failure', async () => {
+    const onSuccess = vi.fn()
+    const onFailure = vi.fn()
+
+    const scopeFail = nock('http://api.test').get('/fail').reply(500, 'err')
+    const clientFail = new HttpClient({ baseUrl: 'http://api.test', circuit: { onFailure } })
+    await expect(clientFail.get('/fail')).rejects.toBeTruthy()
+    expect(onFailure).toHaveBeenCalled()
+    expect(scopeFail.isDone()).toBe(true)
+
+    const scopeOk = nock('http://api.test').get('/ok').reply(200, { ok: true })
+    const clientOk = new HttpClient({ baseUrl: 'http://api.test', circuit: { onSuccess } })
+    const res = await clientOk.get('/ok')
+    expect(res).toEqual({ ok: true })
+    expect(onSuccess).toHaveBeenCalled()
+    expect(scopeOk.isDone()).toBe(true)
+  })
 })
