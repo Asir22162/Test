@@ -1,0 +1,231 @@
+name: Collect pnpm artifacts and summarize
+
+on:
+  workflow_run:
+    workflows: ["CI", "Test — packages/logging", "Suggest fixes (dry-run)"]
+    types: [completed]
+
+jobs:
+  collect-and-parse:
+    name: Collect artifacts and parse pnpm logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for upload step)
+        uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq unzip
+      - name: Download artifacts for completed run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts downloaded parsed summary
+
+          echo "Listing artifacts for run $RUN_ID..."
+          curl -sS -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/artifacts" > artifacts/list.json
+
+          cat artifacts/list.json | jq -r '.artifacts[] | "id:\(.id) name:\(.name) size:\(.size)"' > artifacts/index.txt || true
+          jq '.artifacts' artifacts/list.json > artifacts/artifacts.json
+
+          # Download artifacts whose names match debug-info-* or pnpm-install-*
+          jq -c '.[]' artifacts/artifacts.json | while read -r a; do
+            id=$(echo "$a" | jq -r '.id')
+            name=$(echo "$a" | jq -r '.name')
+            echo "Found artifact id=$id name=$name"
+            if echo "$name" | grep -E 'debug-info-|pnpm-install-' >/dev/null; then
+              out=downloaded/artifact-${id}.zip
+              echo "Downloading $name -> $out"
+              curl -sS -H "Authorization: token $GITHUB_TOKEN" -L "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" -o "$out"
+              unzip -q "$out" -d "downloaded/artifact-${id}"
+              # Record files extracted
+              ls -la "downloaded/artifact-${id}" > artifacts/extracted-${id}.txt || true
+            else
+              echo "Skipping artifact $name"
+            fi
+          done
+
+      - name: Parse pnpm logs
+        run: |
+          set -euo pipefail
+          echo "Collecting pnpm info and errors..." > summary/pnpm-summary.txt
+          for d in downloaded/*; do
+            if [ -d "$d" ]; then
+              echo "Inspecting $d" >> summary/pnpm-summary.txt
+              # find debug-info.txt or similar
+              if find "$d" -type f -name 'debug-info*' | grep -q .; then
+                for f in $(find "$d" -type f -name 'debug-info*'); do
+                  echo "--- Debug file: $f ---" >> summary/pnpm-summary.txt
+                  echo "Contents preview:" >> summary/pnpm-summary.txt
+                  sed -n '1,120p' "$f" >> summary/pnpm-summary.txt || true
+                  echo "" >> summary/pnpm-summary.txt
+                done
+              fi
+
+              # find pnpm-install logs
+              if find "$d" -type f -name 'pnpm-install*' | grep -q .; then
+                for f in $(find "$d" -type f -name 'pnpm-install*'); do
+                  echo "--- pnpm-install file: $f ---" >> summary/pnpm-summary.txt
+                  # extract first N lines containing ERR_INVALID_THIS and their surrounding context
+                  echo "First occurrences of ERR_INVALID_THIS (with context):" >> summary/pnpm-summary.txt
+                  if grep -n -C2 "ERR_INVALID_THIS" "$f" | sed -n '1,200p' >> summary/pnpm-summary.txt; then
+                    # record marker for later steps to act upon
+                    echo "ERR_INVALID_THIS detected in $f" >> summary/pnpm-summary.txt
+                    touch summary/invalid-this-found
+                  fi
+
+                  echo ""
+                  echo "Top 10 request-retry error lines (code ERR_INVALID_THIS):" >> summary/pnpm-summary.txt
+                  grep "ERR_INVALID_THIS" "$f" | sed -n '1,10p' >> summary/pnpm-summary.txt || true
+
+                  echo ""
+                  echo "Tail of install (last 200 lines):" >> summary/pnpm-summary.txt
+                  tail -n 200 "$f" >> summary/pnpm-summary.txt || true
+                done
+              fi
+            fi
+          done
+
+          # Make a machine-parsable JSON summary
+          jq -n --arg run "$RUN_ID" '{run: $run, summary: (input // "no summary")}' > summary/placeholder.json || true
+
+      - name: Create internal issue if ERR_INVALID_THIS found
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs')
+            const runId = process.env.RUN_ID
+            if (!fs.existsSync('summary/invalid-this-found')) {
+              core.info('No ERR_INVALID_THIS found; skipping issue creation.')
+              return
+            }
+            const body = fs.readFileSync('summary/pnpm-summary.txt','utf8')
+            await github.rest.issues.create({ owner: github.context.repo.owner, repo: github.context.repo.repo, title: `Automated: pnpm ERR_INVALID_THIS in workflow run ${runId}`, body })
+
+      - name: Update stability counter and create restore PR if threshold met
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          DEFAULT_BRANCH: ${{ github.event.workflow_run.head_branch || github.event.repository.default_branch }}
+          REVIEWERS: 'Asir22162'
+          LABELS: 'auto:ci'
+        run: |
+          set -euo pipefail
+          # If we found an invalid-this marker, reset counter and exit
+          if [ -f summary/invalid-this-found ]; then
+            echo "Invalid-this found; resetting stable counter"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            echo 0 > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt || true
+            git commit -m "ci(automation): reset pnpm stable counter due to ERR_INVALID_THIS" || true
+            git push --set-upstream origin $branch || true
+            exit 0
+          fi
+
+          # Determine if current summary shows pnpm 10.26.2
+          if grep -q "10\.26\.2" summary/pnpm-summary.txt; then
+            echo "Current run shows pnpm@10.26.2; incrementing stability counter"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            if [ -f pnpm-stable-count.txt ]; then
+              count=$(cat pnpm-stable-count.txt)
+            else
+              count=0
+            fi
+            count=$((count + 1))
+            echo $count > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt
+            git commit -m "ci(automation): update pnpm stable counter to $count" || true
+            git push --set-upstream origin $branch || true
+
+            if [ "$count" -ge 2 ]; then
+              echo "Stability threshold reached (count=$count); creating restore PR"
+              pr_branch=automations/restore-frozen-lockfile-${RUN_ID}
+              git fetch origin $DEFAULT_BRANCH
+              git checkout -b $pr_branch origin/$DEFAULT_BRANCH || git checkout -b $pr_branch
+
+              # Replace --no-frozen-lockfile with --frozen-lockfile in workflows
+              sed -i "s/--no-frozen-lockfile/--frozen-lockfile/g" .github/workflows/*.yml || true
+
+              if git diff --quiet; then
+                echo "No workflow changes needed; skipping PR creation"
+              else
+                git add .github/workflows/*.yml
+                git commit -m "ci: restore --frozen-lockfile after pnpm stability verified" || true
+                git push --set-upstream origin $pr_branch
+
+                # Create draft PR
+                body=$(printf "Automated PR to restore --frozen-lockfile after pnpm was stable in %d consecutive runs. See collector summary for run %s.\n\nSummary:\n\n$(sed -n '1,800p' ../summary/pnpm-summary.txt)" "$count" "$RUN_ID")
+                resp=$(curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"title\": \"chore: restore --frozen-lockfile\", \"head\": \"${pr_branch}\", \"base\": \"${DEFAULT_BRANCH}\", \"body\": \"${body//\"/\\\"}\", \"draft\": true}" "https://api.github.com/repos/${REPO}/pulls" || true)
+                pr_number=$(echo "$resp" | jq -r '.number')
+                if [ "$pr_number" != "null" ] && [ -n "$pr_number" ]; then
+                  echo "Created PR #$pr_number"
+                  # request reviewers if provided
+                  if [ -n "${REVIEWERS:-}" ]; then
+                    reviewers_json=$(printf '%s' "${REVIEWERS}" | jq -R 'split(",") | map(gsub("^ *| *$"; ""))')
+                    curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"reviewers\": $reviewers_json}" "https://api.github.com/repos/${REPO}/pulls/${pr_number}/requested_reviewers" || true
+                  fi
+                  # add labels if provided
+                  if [ -n "${LABELS:-}" ]; then
+                    labels_json=$(printf '%s' "${LABELS}" | jq -R 'split(",") | map(gsub("^ *| *$"; ""))')
+                    curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"labels\": $labels_json}" "https://api.github.com/repos/${REPO}/issues/${pr_number}/labels" || true
+                  fi
+                fi
+              fi
+            fi
+          else
+            echo "pnpm version not 10.26.2 in summary; not incrementing"
+            tmpdir=$(mktemp -d)
+            git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO} "$tmpdir"
+            cd "$tmpdir"
+            branch=automations/pnpm-stability
+            if git rev-parse --verify origin/$branch >/dev/null 2>&1; then
+              git checkout -b $branch origin/$branch
+            else
+              git checkout -b $branch
+            fi
+            echo 0 > pnpm-stable-count.txt
+            git add pnpm-stable-count.txt || true
+            git commit -m "ci(automation): reset pnpm stable counter due to version mismatch" || true
+            git push --set-upstream origin $branch || true
+          fi
+
+      - name: Upload parsed summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-collector-summary-${{ github.event.workflow_run.id }}
+          path: summary/**
+
+      - name: Comment on PR (if applicable)
+        if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_branch }}
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.workflow_run.pull_requests && github.context.payload.workflow_run.pull_requests[0]
+            if (!pr) return
+            const summary = fs.readFileSync('summary/pnpm-summary.txt','utf8')
+            const runId = github.context.payload.workflow_run && github.context.payload.workflow_run.id
+            const body = 'Automated pnpm artifact summary for workflow run #' + runId + "\n\n```\n" + summary.substring(0, 6000) + "\n```"
+            await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })

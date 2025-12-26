@@ -1,0 +1,20 @@
+groups:
+  - name: auth.rules
+    rules:
+      - alert: HighRevokeDeniedRate
+        expr: rate(auth_revoke_rate_denied[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High revoke denied rate"
+          description: "auth_revoke_rate_denied > 0.1/sec per instance over 5m. May indicate attacks or misconfiguration."
+
+      - alert: AuthRedisErrors
+        expr: increase(auth_revoke_rate_redis_errors[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis errors seen in auth rate limiter"
+          description: "Redis errors observed in the auth revoke rate limiter; check Redis connectivity and SCRIPT LOAD status."

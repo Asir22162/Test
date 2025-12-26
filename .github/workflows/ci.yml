@@ -3,6 +3,42 @@ name: CI
 on: [push, pull_request]
 
 jobs:
+  debug-environment:
+    name: Debug — environment (uploads artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Debug and upload
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o debug/debug-info.json || true
+          ) 2>&1 | tee debug/debug-info.txt
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-environment
+          path: debug/**
+
   smoke-logging:
     name: Smoke — packages/logging
     runs-on: ubuntu-latest
@@ -12,11 +48,37 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
+      - name: Ensure pnpm via corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: Enforce pnpm version
+        run: |
+          if [ "${FORCE_PNPM_INSTALL:-false}" = "true" ]; then
+            echo "FORCE_PNPM_INSTALL=true: installing pnpm@10.26.2"
+            npm install -g pnpm@10.26.2
+          else
+            pnpm -v | grep -q '^10\.26\.2$' || (echo 'pnpm version mismatch' && exit 1)
+          fi
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
-          pnpm install --frozen-lockfile
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "pnpm not found; enabling via corepack and preparing pnpm..."
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+          fi
+          pnpm install --no-frozen-lockfile
+          pnpm -v || true
       - name: Check for changes affecting logging
         id: changes
         uses: dorny/paths-filter@v2
@@ -77,12 +139,12 @@ jobs:
                   summary = '\n\n(Unable to parse detailed test summary)'
                 }
                 body += summary
-                body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```
-" + (content.substring(0, 10000) || '') + "\n```\n</details>"
+                body += "\n\n<details><summary>Test results (JSON)</summary>\n\n```" +
+                  "\n" + (content.substring(0, 5000) || '') + "\n```\n</details>"
               } catch (e) {
                 const content = fs.readFileSync(resultsPath, 'utf8')
-                body += "\n\n<details><summary>Test results (raw)</summary>\n\n```
-" + content.substring(0, 10000) + "\n```\n</details>"
+                body += "\n\n<details><summary>Test results (raw)</summary>\n\n```" +
+                  content.substring(0, 5000) + "\n```\n</details>""
               }
             }
 
@@ -149,13 +211,13 @@ jobs:
                 }
                 if (rows.length > 200) body += `\n*(Only first 200 metrics shown)*\n`
               } else {
-                body += "\n\n**Metrics snapshot:**\n\n```
-" + m.substring(0,4000) + "\n```"
+                body += "\n\n**Metrics snapshot:**\n\n```" +
+                  m.substring(0,5000) + "\n```"
               }
 
               // add a link to the run so reviewers can download artifacts
-              const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
-              body += `\n\nArtifacts for this run are available: [View artifacts & logs](${runUrl})`
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              body += `\n\n**Artifacts:** **logging-smoke-results** (attached to workflow run)\n\nRun: ${runUrl}`
             }
 
             const pr = github.context.payload.pull_request
@@ -177,8 +239,8 @@ jobs:
           echo "Smoke tests failed; failing job. See artifacts 'logging-smoke-results' for details."
           exit 1
 
-  build:
-    needs: smoke-logging
+  smoke-api:
+    name: Smoke — apps/api
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,11 +248,812 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
-      - name: Install
+      - name: Ensure pnpm via corepack
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
-          pnpm install --frozen-lockfile
+          corepack enable
+          corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: "Debug: environment and registry reachability"
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o /dev/null || true
+          ) 2>&1 | tee debug/debug-info.txt
+      - name: Upload debug artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-info-${{ github.job }}
+          path: debug/debug-info.txt
+      - name: Install (capture pnpm logs)
+        run: |
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "pnpm not found; enabling via corepack and preparing pnpm..."
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+          fi
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
+          pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
+      - name: Build apps/api
+        run: pnpm -C apps/api run build || true
+      - name: Run migration check (sqlite)
+        run: pnpm -C apps/api run migrate:check
+      - name: Run API smoke (healthcheck)
+        shell: bash
+        continue-on-error: true
+        run: |
+          mkdir -p apps/api/test-artifacts
+          node apps/api/dist/main.js &
+          APP_PID=$!
+          sleep 1
+          if curl -sS http://127.0.0.1:3000/health > apps/api/test-artifacts/health.json 2>&1; then
+            echo "API_SMOKE_PASSED=1" >> $GITHUB_ENV
+          else
+            echo "API_SMOKE_FAILED=1" >> $GITHUB_ENV
+          fi
+          # capture metrics snapshot if available
+          curl -sS http://127.0.0.1:3000/metrics > apps/api/test-artifacts/metrics.txt || true
+          kill $APP_PID || true
+      - name: Upload api smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-smoke-results
+          path: apps/api/test-artifacts/**
+
+  smoke-api-mysql:
+    name: Smoke — apps/api (MySQL)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: weapp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Ensure pnpm via corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: Install (capture pnpm logs)
+        run: |
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
+          pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
+      - name: Build apps/api
+        run: pnpm -C apps/api run build
+      - name: Install mysql client
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" && break || sleep 1; done
+      - name: Run migrations against MySQL
+        shell: bash
+        continue-on-error: true
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: root
+          DB_NAME: weapp
+        run: |
+          mkdir -p apps/api/test-artifacts
+          node -e "require('./apps/api/dist/data-source').AppDataSource.initialize().then(ds=>ds.runMigrations()).then(()=>{console.log('migrations ran OK');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+          echo "$?" > apps/api/test-artifacts/migrations-exitcode
+          if [ "$(cat apps/api/test-artifacts/migrations-exitcode)" -ne 0 ]; then
+            echo "MIGRATIONS_FAILED=1" >> $GITHUB_ENV
+          fi
+          # create a short summary
+          if [ -f apps/api/test-artifacts/migrations-exitcode ]; then
+            code=$(cat apps/api/test-artifacts/migrations-exitcode)
+            if [ "$code" -eq 0 ]; then
+              echo "Migrations ran: OK" > apps/api/test-artifacts/summary.txt
+            else
+              echo "Migrations ran: FAIL (exitcode=$code)" > apps/api/test-artifacts/summary.txt
+            fi
+          else
+            echo "Migrations: unknown (no exit code captured)" > apps/api/test-artifacts/summary.txt
+          fi
+          # include table listing if available
+          if [ -f apps/api/test-artifacts/mysql-tables.txt ]; then
+            echo "" >> apps/api/test-artifacts/summary.txt
+            echo "Tables:" >> apps/api/test-artifacts/summary.txt
+            tail -n 200 apps/api/test-artifacts/mysql-tables.txt >> apps/api/test-artifacts/summary.txt || true
+          fi
+      - name: Dump migration tables
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e "SHOW TABLES" > apps/api/test-artifacts/mysql-tables.txt || true
+      - name: Upload api-mysql artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-mysql-results
+          path: apps/api/test-artifacts/**
+      - name: Write api-mysql summary JSON
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          p='apps/api/test-artifacts/summary.txt'
+          summary = open(p,'r',encoding='utf8').read() if os.path.exists(p) else ''
+          open('apps/api/test-artifacts/summary.json','w',encoding='utf8').write(json.dumps({'summary': summary}))
+          print('wrote apps/api/test-artifacts/summary.json')
+          PY
+      - name: Comment on PR if smoke-mysql failed
+        if: ${{ env.MIGRATIONS_FAILED == '1' && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const summaryPath = 'apps/api/test-artifacts/summary.txt'
+            let body = '⚠️ Smoke — `apps/api` (MySQL) migrations failed.'
+            if (fs.existsSync(summaryPath)) {
+              const s = fs.readFileSync(summaryPath,'utf8')
+              body += `\n\n**Summary:**\n\n```\n${s.substring(0,5000)}\n```\n`
+            }
+            body += `\n\nArtifacts: **api-mysql-results** (attached to workflow run)\n\nRun: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+            github.rest.issues.createComment({
+              issue_number: context.payload.pull_request.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+  smoke-api-e2e:
+    name: Smoke — apps/api (e2e)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: weapp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:8.2.2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd='redis-cli ping'
+          --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: Install (capture pnpm logs)
+        run: |
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
+          pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
+      - name: Build apps/api
+        run: pnpm -C apps/api run build
+      - name: Install mysql client
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" && break || sleep 1; done
+      - name: Wait for Redis
+        run: |
+          for i in $(seq 1 30); do redis-cli -h 127.0.0.1 ping && break || sleep 1; done
+      - name: Run migrations against MySQL
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: root
+          DB_NAME: weapp
+        run: |
+          mkdir -p apps/api/test-artifacts
+          node -e "require('./apps/api/dist/data-source').AppDataSource.initialize().then(ds=>ds.runMigrations()).then(()=>{console.log('migrations ran OK');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+      - name: Run e2e tests (auth revoke)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: root
+          DB_NAME: weapp
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          pnpm -C apps/api test -- -t "auth e2e"
+          # capture metrics from running app
+          curl -sS http://127.0.0.1:3000/metrics > apps/api/test-artifacts/metrics.txt || true
+      - name: Upload api-e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-e2e-results
+          path: apps/api/test-artifacts/**
+
+      - name: Comment on PR if e2e failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              const path = 'apps/api/test-artifacts/metrics.txt'
+              if (fs.existsSync(path)) {
+                summary = fs.readFileSync(path,'utf8').split('\n').slice(0,50).join('\n')
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
+            if (pr) {
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ API e2e smoke check failed.\n\n**Metrics snapshot (first lines):**\n\n```\n${summary || '(no metrics snapshot)'}\n```\n\n**Artifacts:** **api-e2e-results** (attached to workflow run).\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+
+  smoke-grafana-provisioning:
+    name: Smoke — Grafana provisioning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for changes affecting grafana
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            grafana:
+              - 'docs/grafana/**'
+      - name: Start Grafana container
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          # start grafana with provisioning and dashboards mounted
+          docker run -d --name ci-grafana \
+            -e GF_SECURITY_ADMIN_PASSWORD=admin \
+            -v $GITHUB_WORKSPACE/docs/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro \
+            -v $GITHUB_WORKSPACE/docs/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro \
+            -v $GITHUB_WORKSPACE/docs/grafana/dashboards:/var/lib/grafana/dashboards/auth:ro \
+            -p 3000:3000 \
+            grafana/grafana:latest || true
+          # wait for health endpoint
+          for i in $(seq 1 60); do
+            if curl -sS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Grafana is up"
+              break
+            fi
+            sleep 1
+          done
+      - name: Check dashboard UID exists
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p grafana-provisioning || true
+          echo "Provisioning check started: $(date)" > grafana-provisioning/summary.txt || true
+          echo "Checking Grafana for dashboard UID: auth-token-revoke-dashboard"
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin http://127.0.0.1:3000/api/dashboards/uid/auth-token-revoke-dashboard || true)
+            echo "status=$status"
+            if [ "$status" = "200" ]; then
+              echo "DASHBOARD_FOUND=1" >> $GITHUB_ENV
+              echo "Grafana provisioning OK — dashboard found"
+              echo "Dashboard uid 'auth-token-revoke-dashboard' found" >> grafana-provisioning/summary.txt || true
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error ::Dashboard UID auth-token-revoke-dashboard not found"
+          echo "Dashboard uid 'auth-token-revoke-dashboard' not found" >> grafana-provisioning/summary.txt || true
+          echo "Grafana logs (tail 200):"
+          docker logs ci-grafana --tail 200 || true
+          exit 1
+
+      - name: Validate dashboards from provisioning
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -e
+          DASH_DIR="$GITHUB_WORKSPACE/docs/grafana/dashboards"
+          if [ ! -d "$DASH_DIR" ]; then
+            echo "No dashboards directory found at $DASH_DIR; skipping dashboard validation"
+            exit 0
+          fi
+
+          failed_dir="grafana-dashboards-failed"
+          rm -rf "$failed_dir" || true
+          mkdir -p "$failed_dir"
+          missing=0
+
+          # find all JSON dashboards (recursive)
+          while IFS= read -r -d '' file; do
+            echo "Checking dashboard file: $file"
+            read uid title < <(python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); print((j.get("uid") or "") + "\t" + (j.get("title") or ""))' "$file")
+            uid=$(echo "$uid" | tr -d '\r')
+            title=$(echo "$title" | tr -d '\r')
+
+            if [ -n "$uid" ]; then
+              echo "Validating by uid: $uid"
+              status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin "http://127.0.0.1:3000/api/dashboards/uid/$uid" || true)
+              echo "status=$status"
+              if [ "$status" != "200" ]; then
+                echo "::error ::Dashboard with uid $uid (file: $file) not found"
+                cp "$file" "$failed_dir/"
+                missing=1
+              fi
+            else
+              # fallback to search by title
+              if [ -z "$title" ]; then
+                echo "::error ::Dashboard file $file has no uid or title"
+                cp "$file" "$failed_dir/"
+                missing=1
+              else
+                echo "Searching for dashboard by title: $title"
+                title_enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$title")
+                results=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/search?query=$title_enc&type=dash-db" || true)
+                found=$(python3 -c 'import sys,json;q=sys.argv[1];items=json.loads(sys.argv[2]) if sys.argv[2] else [];print("1" if any(it.get("title")==q for it in items) else "0")' "$title" "$results")
+                if [ "$found" != "1" ]; then
+                  echo "::error ::Dashboard with title '$title' (file: $file) not found"
+                  cp "$file" "$failed_dir/"
+                  missing=1
+                fi
+              fi
+            fi
+          done < <(find "$DASH_DIR" -type f -name '*.json' -print0)
+
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more dashboards not provisioned. See $failed_dir for JSON files"
+            echo "Missing dashboards:" >> grafana-provisioning/summary.txt || true
+            ls "$failed_dir" -1 >> grafana-provisioning/summary.txt || true
+            tar -czf "$failed_dir.tar.gz" -C "$failed_dir" . || true
+            ls -la "$failed_dir" || true
+            docker logs ci-grafana --tail 200 || true
+            exit 1
+          fi
+          echo "All dashboards from provisioning validated."
+
+      - name: Upload failed dashboards artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-failed-dashboards
+          path: grafana-dashboards-failed.tar.gz
+
+      - name: Write provisioning summary JSON
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          summary = ''
+          if os.path.exists('grafana-provisioning/summary.txt'):
+              summary = open('grafana-provisioning/summary.txt','r', encoding='utf8').read()
+          # get grafana logs tail
+          try:
+              glogs = os.popen('docker logs ci-grafana --tail 200 2>/dev/null').read()
+          except Exception:
+              glogs = ''
+          failed_dashboards = []
+          if os.path.isdir('grafana-dashboards-failed'):
+              failed_dashboards = [f for f in os.listdir('grafana-dashboards-failed')]
+          obj = {
+              'summary_text': summary[:5000],
+              'errors': summary.splitlines()[-50:],
+              'failed_dashboards': failed_dashboards,
+              'grafana_logs_tail': glogs[-8000:]
+          }
+          open('grafana-provisioning/summary.json','w', encoding='utf8').write(json.dumps(obj))
+          print('wrote grafana-provisioning/summary.json')
+          PY
+
+      - name: Upload provisioning snapshot artifact
+        if: failure()
+        run: |
+          mkdir -p grafana-provisioning || true
+          tar -czf grafana-provisioning/provisioning-and-dashboards.tar.gz docs/grafana/provisioning docs/grafana/dashboards || true
+        # upload artifact
+      - name: Upload provisioning snapshot artifact (upload)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-provisioning
+          path: grafana-provisioning/**
+
+      - name: Comment on PR if provisioning failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              if (fs.existsSync('grafana-provisioning/summary.txt')) {
+                summary = fs.readFileSync('grafana-provisioning/summary.txt', 'utf8')
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
+
+            if (pr) {
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ Grafana provisioning smoke check failed.\n\n**Summary:**\n\n```\n${summary || '(no short summary available)'}\n```\n\n**Artifacts:** **grafana-provisioning** (attached to workflow run)\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+
+      - name: Check datasources from provisioning
+        if: steps.changes.outputs.grafana == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          DS_FILE="$GITHUB_WORKSPACE/docs/grafana/provisioning/datasources/datasources.yml"
+          if [ ! -f "$DS_FILE" ]; then
+            echo "::error ::Datasources file $DS_FILE not found"
+            exit 1
+          fi
+          echo "Parsing datasource entries (name,type,url,access) from $DS_FILE"
+          entries=$(python3 - <<'PY'
+          import sys
+          p=sys.argv[1]
+          entries=[]
+          with open(p) as f:
+              cur=None
+              for ln in f:
+                  s=ln.rstrip('\n')
+                  if s.strip().startswith('- name:') or s.strip().startswith('name:'):
+                      if cur:
+                          entries.append(cur)
+                      name=s.split(':',1)[1].strip().strip('"')
+                      cur={'name':name,'type':'','url':'','access':''}
+          elif s.strip().startswith('type:') and cur is not None:
+              cur['type']=s.split(':',1)[1].strip().strip('"')
+          elif s.strip().startswith('url:') and cur is not None:
+              cur['url']=s.split(':',1)[1].strip().strip('"')
+          elif s.strip().startswith('access:') and cur is not None:
+              cur['access']=s.split(':',1)[1].strip().strip('"')
+          if cur:
+              entries.append(cur)
+          for e in entries:
+              print('\t'.join([e['name'], e['type'], e['url'], e['access']]))
+          PY
+          "$DS_FILE")
+          if [ -z "$entries" ]; then echo "::error ::No datasource entries found in $DS_FILE"; exit 1; fi
+          echo "$entries" | while IFS=$'\t' read -r name typ url access; do
+            name=$(echo "$name" | tr -d '"')
+            typ=$(echo "$typ" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+            url=$(echo "$url" | tr -d '"')
+            access=$(echo "$access" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+            echo "Checking datasource: $name (expected type: ${typ:-<none>}, url: ${url:-<none>}, access: ${access:-<none>})"
+            name_enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$name")
+            for i in $(seq 1 30); do
+              ds_status=$(curl -s -o /dev/null -w "%{http_code}" -u admin:admin "http://127.0.0.1:3000/api/datasources/name/$name_enc" || true)
+              echo "ds_status=$ds_status (name=$name)"
+              if [ "$ds_status" = "200" ]; then
+                ds_json=$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/name/$name_enc")
+                actual_type=$(python3 - <<'PY'
+                import sys, json
+                j=json.load(sys.stdin)
+                print((j.get('type') or '').lower())
+                PY
+                 <<<'$ds_json')
+                if [ -n "$typ" ] && [ "$typ" != "$actual_type" ]; then
+                  echo "::error ::Datasource $name has type '${actual_type}', expected '${typ}'"
+                  echo "Datasource JSON: $ds_json"
+                  echo "Datasource $name type mismatch: actual='${actual_type}', expected='${typ}'" >> grafana-provisioning/summary.txt || true
+                  docker logs ci-grafana --tail 200 || true
+                  exit 1
+                fi
+                actual_url=$(python3 - <<'PY'
+                import sys,json
+                j=json.load(sys.stdin)
+                print(j.get('url') or '')
+                PY
+                 <<<'$ds_json')
+                if [ -n "$url" ]; then
+                  # normalize (strip trailing slash)
+                  norm_expected=$(echo "$url" | sed 's:/*$::')
+                  norm_actual=$(echo "$actual_url" | sed 's:/*$::')
+                  if [ "$norm_expected" != "$norm_actual" ]; then
+                    echo "::error ::Datasource $name url mismatch: actual='$actual_url' expected='$url'"
+                    echo "Datasource JSON: $ds_json"
+                    echo "Datasource $name url mismatch: actual='${actual_url}', expected='${url}'" >> grafana-provisioning/summary.txt || true
+                    docker logs ci-grafana --tail 200 || true
+                    exit 1
+                  fi
+                fi
+                actual_access=$(python3 - <<'PY'
+                import sys,json
+                j=json.load(sys.stdin)
+                print((j.get('access') or '').lower())
+                PY
+                 <<<'$ds_json')
+                if [ -n "$access" ] && [ "$access" != "$actual_access" ]; then
+                  echo "::error ::Datasource $name access mismatch: actual='$actual_access' expected='$access'"
+                  echo "Datasource JSON: $ds_json"
+                  docker logs ci-grafana --tail 200 || true
+                  exit 1
+                fi
+                keyName=$(echo "$name" | sed 's/[^A-Za-z0-9_]/_/g')
+                echo "DATASOURCE_${keyName}_FOUND=1" >> $GITHUB_ENV
+                echo "Found datasource $name and type/url/access validated: type=${actual_type:-<none>} url=${actual_url:-<none>} access=${actual_access:-<none>}"
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ds_status" != "200" ]; then
+              echo "::error ::Datasource $name not found"
+              echo "Datasource $name not found in Grafana API" >> grafana-provisioning/summary.txt || true
+              docker logs ci-grafana --tail 200 || true
+              exit 1
+            fi
+          done
+          echo "All datasources from provisioning found and types/urls/access validated."
+      - name: Upload grafana logs
+        if: always()
+        run: |
+          mkdir -p grafana-logs
+          docker logs ci-grafana --tail 200 > grafana-logs/ci-grafana.log || true
+      - name: Upload logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-provisioning-logs
+          path: grafana-logs/**
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f ci-grafana || true
+
+  smoke-grafana-demo:
+    name: Smoke — Grafana demo (compose + metrics)
+    runs-on: ubuntu-latest
+    needs: [smoke-grafana-provisioning]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Start demo compose
+        run: |
+          docker compose -f docs/grafana/demo-docker-compose.yml up -d
+          for i in $(seq 1 60); do
+            if curl -sS http://127.0.0.1:9090/-/ready >/dev/null 2>&1 && curl -sS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Services ready"
+              break
+            fi
+            sleep 2
+          done
+      - name: Push sample metrics
+        run: |
+          node docs/grafana/push-sample-metrics.js
+
+      - name: Capture prometheus snapshot & write demo summary
+        run: |
+          mkdir -p grafana-demo || true
+          # save prometheus query result
+          curl -sS "http://127.0.0.1:9090/api/v1/query?query=auth_revoke_count" > grafana-demo/prom_query.json || true
+          # get tails of logs
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 > grafana-demo/prometheus.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 > grafana-demo/pushgateway.log || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 > grafana-demo/grafana.log || true
+          python3 - <<'PY'
+          import json,os
+          q=''
+          if os.path.exists('grafana-demo/prom_query.json'):
+              q=open('grafana-demo/prom_query.json').read()
+          prom_lines = ''
+          if os.path.exists('grafana-demo/prometheus.log'):
+              prom_lines=open('grafana-demo/prometheus.log').read()[-5000:]
+          obj={'prom_query': json.loads(q) if q else {}, 'prometheus_log_tail': prom_lines}
+          open('grafana-demo/summary.json','w', encoding='utf8').write(json.dumps(obj))
+          open('grafana-demo/summary.txt','w', encoding='utf8').write((str(obj))[:5000])
+          print('wrote grafana-demo summary')
+          PY
+
+      - name: Wait for Prometheus to scrape sample metric
+        run: |
+          for i in $(seq 1 30); do
+            resp=$(curl -sS "http://127.0.0.1:9090/api/v1/query?query=auth_revoke_count" || true)
+            if [ -n "$resp" ]; then
+              count=$(python3 - <<'PY' "$resp"
+              import sys, json
+              try:
+                  j=json.loads(sys.argv[1])
+              except Exception:
+                  j={}
+              res=j.get('data',{}).get('result',[])
+              print(len(res))
+              PY
+              )
+              if [ "$count" -gt 0 ]; then
+                echo "Prometheus scraped metric auth_revoke_count ($count samples)"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "::error ::Prometheus did not show 'auth_revoke_count' metric after push"
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 || true
+          exit 1
+      - name: Upload demo logs on failure
+        if: failure()
+        run: |
+          mkdir -p grafana-demo-logs || true
+          docker logs $(docker ps -q --filter ancestor=grafana/grafana:latest) --tail 200 > grafana-demo-logs/grafana.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/prometheus:latest) --tail 200 > grafana-demo-logs/prometheus.log || true
+          docker logs $(docker ps -q --filter ancestor=prom/pushgateway:latest) --tail 200 > grafana-demo-logs/pushgateway.log || true
+      - name: Upload demo logs artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-demo-logs
+          path: grafana-demo-logs/**
+
+      - name: Upload demo summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-demo-summary
+          path: grafana-demo/**
+
+      - name: Comment on PR if grafana demo failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            let summary = ''
+            try {
+              if (fs.existsSync('grafana-demo/summary.txt')) {
+                summary = fs.readFileSync('grafana-demo/summary.txt', 'utf8')
+                if (summary.length > 5000) summary = summary.substring(0,5000) + '\n... (truncated)'
+              }
+            } catch (e) { /* ignore */ }
+            if (pr) {
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+              const body = `⚠️ Grafana demo smoke check failed.\n\n**Summary:**\n\n```\n${summary || '(no short summary available)'}\n```\n\n**Artifacts:** **grafana-demo-logs**, **grafana-demo** (attached to workflow run).\n\nRun: ${runUrl}\n\nPlease download the artifacts from the run to debug.`
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body })
+            }
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f docs/grafana/demo-docker-compose.yml down || true
+
+  build:
+    needs: [smoke-logging, smoke-api, smoke-api-mysql, smoke-api-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: "Debug: environment and registry reachability"
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o /dev/null || true
+          ) 2>&1 | tee debug/debug-info.txt
+      - name: Upload debug artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-info-${{ github.job }}
+          path: debug/debug-info.txt
+      - name: Install (capture pnpm logs)
+        run: |
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "pnpm not found; enabling via corepack and preparing pnpm..."
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+          fi
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
+          pnpm -v || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
       - name: Setup Java (check baseline)
         uses: actions/setup-java@v4
         with:
@@ -202,6 +1065,49 @@ jobs:
         run: pnpm -w -r run lint
       - name: Test
         run: pnpm -w -r run test
+
+      - name: Run http-client tests (capture JSON results)
+        shell: bash
+        run: |
+          mkdir -p packages/http-client/test-artifacts
+          pnpm -C packages/http-client test -- --reporter json > packages/http-client/test-artifacts/test-results.json 2>&1 || true
+          EXIT=$?
+          echo "$EXIT" > packages/http-client/test-artifacts/test-exitcode
+          if [ "$EXIT" -ne 0 ]; then
+            echo "HTTP_CLIENT_TESTS_FAILED=1" >> $GITHUB_ENV
+            echo "::error ::packages/http-client tests failed (exit code $EXIT)"
+            # keep artifacts uploaded by later step, but fail the job
+            exit $EXIT
+          fi
+
+      - name: Upload http-client test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: http-client-test-results
+          path: packages/http-client/test-artifacts/**
+
+      - name: Comment on PR if http-client tests failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = github.context.payload.pull_request
+            const runUrl = `https://github.com/${github.context.repo.owner}/${github.context.repo.repo}/actions/runs/${github.context.runId}`
+            if (pr) {
+              const body = `⚠️ **packages/http-client** tests failed in CI.
+
+              **Artifacts uploaded:** **http-client-test-results** (contains test-results.json and stdout)
+
+              **Run details:** ${runUrl}
+
+              **Next steps:** download the artifact and inspect:
+              - packages/http-client/test-artifacts/test-results.json (JSON Vitest output)
+              - packages/http-client/test-artifacts/test-exitcode
+
+              If you want, re-run the job after pushing a fix or ask for help with failing test details.`;
+              await github.rest.issues.createComment({ owner: github.context.repo.owner, repo: github.context.repo.repo, issue_number: pr.number, body });
+            }
 
       - name: Run ops tests
         run: pnpm --filter ops... run test:ops || true
@@ -362,11 +1268,50 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '10.26.2'
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v
+          which pnpm
+      - name: "Debug: environment and registry reachability"
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o /dev/null || true
+          ) 2>&1 | tee debug/debug-info.txt
+      - name: Upload debug artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-info-${{ github.job }}
+          path: debug/debug-info.txt
       - name: Install
         run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
-          pnpm install --frozen-lockfile
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "pnpm not found; enabling via corepack and preparing pnpm..."
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+          fi
+          pnpm install --no-frozen-lockfile
+          pnpm -v || true
       - name: Lint
         run: pnpm -w -r run lint
       - name: Test (Node 22)

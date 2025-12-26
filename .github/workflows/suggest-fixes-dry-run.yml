@@ -20,15 +20,59 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
 
       - name: Setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v || true
+          which pnpm || true
+
+      - name: "Debug: environment and registry reachability"
+        run: |
+          mkdir -p debug
+          (
+            echo '--- Debug: Node & pnpm ---'
+            node -v || true
+            pnpm -v || true
+            echo '--- Corepack ---'
+            corepack --version || true
+            corepack enable || true
+            corepack prepare pnpm@10.26.2 --activate || true
+            echo '--- npm registry ---'
+            npm config get registry || true
+            echo "NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-}"
+            echo '--- Env vars (NPM/PNPM/HTTP/REGISTRY/PROXY) ---'
+            env | grep -E 'NPM|PNPM|HTTP|HTTPS|REGISTRY|PROXY' || true
+            echo '--- Curl registry headers ---'
+            curl -sS -I https://registry.npmjs.org/vue || true
+            echo '--- Curl registry fetch ---'
+            curl -sS https://registry.npmjs.org/vue -o /dev/null || true
+          ) 2>&1 | tee debug/debug-info.txt
+
+      - name: Upload debug artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-info-${{ github.job }}
+          path: debug/debug-info.txt
+
+      - name: Install dependencies (capture pnpm logs)
+        run: |
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --no-frozen-lockfile --reporter ndjson --loglevel debug 2>&1 | tee -a debug/pnpm-install.txt || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
 
       - name: Run audit (generate audit.json)
         run: pnpm audit --json > audit.json || true

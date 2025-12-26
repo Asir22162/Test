@@ -24,10 +24,35 @@ jobs:
       - name: Setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@10.26.2 --activate
+          pnpm -v || true
+          which pnpm || true
 
-      - name: Install dependencies
-        run: pnpm install --recursive --silent
+      - name: Verify pnpm setup
+        run: |
+          pnpm -v || true
+          which pnpm || true
+
+      - name: Enforce pnpm version
+        run: |
+          if [ "${FORCE_PNPM_INSTALL:-false}" = "true" ]; then
+            echo "FORCE_PNPM_INSTALL=true: installing pnpm@10.26.2"
+            npm install -g pnpm@10.26.2
+          else
+            pnpm -v | grep -q '^10\.26\.2$' || (echo 'pnpm version mismatch' && exit 1)
+          fi
+
+      - name: Install dependencies (capture pnpm logs)
+        run: |
+          mkdir -p debug
+          echo '--- Running pnpm install (debug mode) ---' > debug/pnpm-install.txt
+          PNPM_LOG_LEVEL=debug pnpm install --recursive --silent 2>&1 | tee -a debug/pnpm-install.txt || true
+      - name: Upload pnpm install artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-${{ github.job }}
+          path: debug/pnpm-install.txt
 
       - name: Run ops tests
         env:
@@ -50,7 +75,7 @@ jobs:
       - name: Setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@10.26.2 --activate
 
       - name: Install dependencies
         run: pnpm install --recursive --silent

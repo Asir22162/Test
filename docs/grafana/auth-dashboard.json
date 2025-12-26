@@ -1,0 +1,162 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Auth: Revokes (rate)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        { "expr": "rate(auth_revoke_count{instance=~\"$instance\",env=~\"$env\",service=~\"$service\"}[5m])", "legendFormat": "revokes/sec" },
+        { "expr": "rate(auth_revoke_rate_denied{instance=~\"$instance\",env=~\"$env\",service=~\"$service\"}[5m])", "legendFormat": "denied/sec" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth: Rotations & Issues (rate)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        { "expr": "rate(auth_issue_count{env=~\"$env\"}[5m])", "legendFormat": "issues/sec" },
+        { "expr": "rate(auth_rotate_count{env=~\"$env\"}[5m])", "legendFormat": "rotate/sec" },
+        { "expr": "rate(auth_rotate_failures{env=~\"$env\"}[5m])", "legendFormat": "rotate-failures/sec" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Revoke Denied (5m rate)",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_denied{service=~\"$service\"}[5m]))" }]
+    },
+    {
+      "type": "stat",
+      "title": "Revoke Allowed (5m rate)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_allowed{service=~\"$service\"}[5m]))" }]
+    },
+    {
+      "type": "stat",
+      "title": "Redis Errors (5m)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(auth_revoke_rate_redis_errors{service=~\"$service\",env=~\"$env\"}[5m]))" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Bucket Remaining (example)",
+      "gridPos": {"h": 4, "w": 18, "x": 0, "y": 12},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "avg(auth_tokenbucket_remaining{service=~\"$service\",instance=~\"$instance\"})" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top Users by Revokes",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 16},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "topk($topk, sum by (user) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m])))", "legendFormat": "{{user}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Revokes by Team / Service",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 16},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        { "expr": "sum by (team) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m]))", "legendFormat": "team {{team}}" },
+        { "expr": "sum by (service) (rate(auth_revoke_count{env=~\"$env\",service=~\"$service\"}[5m]))", "legendFormat": "service {{service}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Latency (example)",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 22},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(redis_command_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top Users Denied (by revokes denied)",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 22},
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "topk($topk, sum by (user) (rate(auth_revoke_rate_denied{env=~\"$env\",service=~\"$service\"}[5m])))", "legendFormat": "{{user}}" }]
+    }
+  ],
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["auth","revoke","tokens"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "label": "Prometheus data source",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" }
+      },
+      {
+        "name": "env",
+        "type": "query",
+        "label": "Environment",
+        "query": "label_values(env)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "label": "Service",
+        "query": "label_values(service)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Instance",
+        "query": "label_values(instance)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "region",
+        "type": "query",
+        "label": "Region",
+        "query": "label_values(region)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "team",
+        "type": "query",
+        "label": "Team",
+        "query": "label_values(team)",
+        "allValue": ".*",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "topk",
+        "type": "textbox",
+        "label": "Top N",
+        "query": "10",
+        "current": { "text": "10", "value": "10" }
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Auth - Token & Revoke Metrics (templated)",
+  "uid": "auth-token-revoke-dashboard",
+  "version": 2
+}
