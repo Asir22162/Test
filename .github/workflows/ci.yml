@@ -728,13 +728,16 @@ PY
 
       - name: Run http-client tests (capture JSON results)
         shell: bash
-        continue-on-error: true
         run: |
           mkdir -p packages/http-client/test-artifacts
           pnpm -C packages/http-client test -- --reporter json > packages/http-client/test-artifacts/test-results.json 2>&1 || true
-          echo "$?" > packages/http-client/test-artifacts/test-exitcode
-          if [ "$(cat packages/http-client/test-artifacts/test-exitcode)" -ne 0 ]; then
+          EXIT=$?
+          echo "$EXIT" > packages/http-client/test-artifacts/test-exitcode
+          if [ "$EXIT" -ne 0 ]; then
             echo "HTTP_CLIENT_TESTS_FAILED=1" >> $GITHUB_ENV
+            echo "::error ::packages/http-client tests failed (exit code $EXIT)"
+            # keep artifacts uploaded by later step, but fail the job
+            exit $EXIT
           fi
 
       - name: Upload http-client test artifacts
